@@ -37,7 +37,7 @@ public class ModConfigs {
         FORCED_BIOME_SIZE = builder
                 .comment("Size category of forced biome zones.",
                          "When a required biome is missing, a zone with a random size in this range is created.",
-                         "SMALL = 100-200 blocks, MEDIUM = 250-400 blocks, LARGE = 500-700 blocks.",
+                         "SMALL = 100-200 blocks, MEDIUM = 250-350 blocks (recommended), LARGE = 400-600 blocks.",
                          "Each zone gets a different random size within the chosen range.")
                 .defineEnum("forcedBiomeSize", BiomeZoneSize.MEDIUM);
 

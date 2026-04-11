@@ -4,8 +4,8 @@ import java.util.Random;
 
 public enum BiomeZoneSize {
     SMALL(100, 200),
-    MEDIUM(250, 400),
-    LARGE(500, 700);
+    MEDIUM(250, 350),
+    LARGE(400, 600);
 
     private final int minSize;
     private final int maxSize;
