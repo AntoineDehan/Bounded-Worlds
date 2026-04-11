@@ -146,8 +146,9 @@ public class WorldBorderHandler {
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Checking {} required structure(s) within {} block radius...",
                 structureEntries.size(), radius);
 
+        BiomeZoneSize sizeCategory = ModConfigs.FORCED_BIOME_SIZE.get();
         List<String> structureIds = new ArrayList<>(structureEntries);
-        StructureScanner.ScanResult result = StructureScanner.scanAndPlace(overworld, radius, structureIds, biomeScanResult);
+        StructureScanner.ScanResult result = StructureScanner.scanAndPlace(overworld, radius, structureIds, biomeScanResult, sizeCategory);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Structure scan complete in {}ms. Found: {}, Placed: {}, Failed: {}",
                 result.scanTimeMs(), result.found().size(), result.placed().size(), result.failed().size());

@@ -3,6 +3,9 @@ package net.denlille.bounded_worlds.structure;
 import com.mojang.datafixers.util.Pair;
 import net.denlille.bounded_worlds.BoundedWorlds;
 import net.denlille.bounded_worlds.biome.BiomeScanner;
+import net.denlille.bounded_worlds.biome.BiomeZoneSize;
+import net.denlille.bounded_worlds.biome.ForcedBiomeZone;
+import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
@@ -33,7 +36,7 @@ import java.util.Random;
 public class StructureScanner {
 
     public static ScanResult scanAndPlace(ServerLevel level, int radius, List<String> structureIds,
-                                           BiomeScanner.ScanResult biomeScanResult) {
+                                           BiomeScanner.ScanResult biomeScanResult, BiomeZoneSize sizeCategory) {
         long startTime = System.currentTimeMillis();
 
         Registry<Structure> structureRegistry = level.registryAccess().registryOrThrow(Registries.STRUCTURE);
@@ -88,8 +91,15 @@ public class StructureScanner {
 
             // I1 fix: generate StructureStart once and pass it to forcePlace
             GenerateResult generateResult = findValidPlacementAndGenerate(level, structure, biomeScanResult, spawnPos, radius, random, idStr);
+
+            // Fallback: if no existing biome worked, force a dedicated biome zone and retry
             if (generateResult == null) {
-                BoundedWorlds.LOGGER.warn("[Bounded Worlds]   FAILED: Could not find valid biome location for {}", idStr);
+                BoundedWorlds.LOGGER.info("[Bounded Worlds]   Primary placement failed for {} — trying fallback with forced biome zone...", idStr);
+                generateResult = fallbackWithForcedBiome(level, structure, spawnPos, radius, random, idStr, sizeCategory);
+            }
+
+            if (generateResult == null) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds]   FAILED: Could not place {} even with fallback.", idStr);
                 failed.add(idStr);
                 continue;
             }
@@ -230,6 +240,130 @@ public class StructureScanner {
 
         BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Structure.generate() failed for all {} candidate(s) for {}",
                 tried, structureId);
+        return null;
+    }
+
+    /**
+     * Fallback: creates a forced biome zone for the structure and retries generation.
+     * Picks a valid biome from the structure's requirements, forces a zone at a random
+     * location within the radius, then tries Structure.generate() at the zone center.
+     */
+    @Nullable
+    private static GenerateResult fallbackWithForcedBiome(ServerLevel level, Structure structure,
+                                                           BlockPos center, int radius, Random random,
+                                                           String structureId, BiomeZoneSize sizeCategory) {
+        HolderSet<Biome> validBiomes = structure.biomes();
+
+        // Pick a non-ocean/river biome from the structure's valid biomes
+        List<Holder<Biome>> candidates = new ArrayList<>();
+        validBiomes.forEach(holder -> {
+            if (!holder.is(BiomeTags.IS_OCEAN) && !holder.is(BiomeTags.IS_RIVER) && !holder.is(BiomeTags.IS_DEEP_OCEAN)) {
+                candidates.add(holder);
+            }
+        });
+
+        if (candidates.isEmpty()) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: {} has no valid non-ocean biomes.", structureId);
+            return null;
+        }
+
+        // Sort deterministically then pick randomly
+        candidates.sort((a, b) -> {
+            String nameA = a.unwrapKey().map(k -> k.location().toString()).orElse("");
+            String nameB = b.unwrapKey().map(k -> k.location().toString()).orElse("");
+            return nameA.compareTo(nameB);
+        });
+        Holder<Biome> chosenBiome = candidates.get(random.nextInt(candidates.size()));
+        String biomeName = chosenBiome.unwrapKey().map(k -> k.location().toString()).orElse("unknown");
+
+        BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: chose biome {} for structure {}", biomeName, structureId);
+
+        // Generate a zone size large enough for a structure
+        int zoneSize = Math.max(sizeCategory.randomSize(random), 250);
+
+        // Find a valid position within the world radius for the new zone
+        int centerX = center.getX();
+        int centerZ = center.getZ();
+        int borderPadding = 100;
+        int effectiveRadius = radius - borderPadding;
+        double zoneMaxRadius = (zoneSize / 2.0) * 1.2 + 16; // account for noise distortion
+
+        BlockPos placement = null;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            double angle = random.nextDouble() * 2 * Math.PI;
+            double dist = (effectiveRadius * 0.3) + (random.nextDouble() * effectiveRadius * 0.6);
+            int px = centerX + (int) (Math.cos(angle) * dist);
+            int pz = centerZ + (int) (Math.sin(angle) * dist);
+
+            // Verify zone fits within radius
+            double distFromCenter = Math.sqrt((long)(px - centerX) * (px - centerX) + (long)(pz - centerZ) * (pz - centerZ));
+            if (distFromCenter + zoneMaxRadius > effectiveRadius) continue;
+
+            // Verify no overlap with existing forced zones
+            boolean overlaps = false;
+            for (ForcedBiomeZone existing : ForcedBiomeZoneManager.getZones()) {
+                double existingMaxR = (existing.size() / 2.0) * 1.2 + 16;
+                double minDist = existingMaxR + zoneMaxRadius + 32;
+                double edx = px - existing.centerX();
+                double edz = pz - existing.centerZ();
+                if (Math.sqrt(edx * edx + edz * edz) < minDist) {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if (overlaps) continue;
+
+            placement = new BlockPos(px, 0, pz);
+            break;
+        }
+
+        if (placement == null) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: could not find valid placement for biome zone.");
+            return null;
+        }
+
+        // Create and register the forced biome zone
+        String desc = biomeName + " (fallback for " + structureId + ")";
+        ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc);
+        ForcedBiomeZoneManager.addZone(zone);
+
+        BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: created forced biome zone {} at ({}, {}), size {}",
+                desc, placement.getX(), placement.getZ(), zoneSize);
+
+        // Try Structure.generate() at the center of the new zone
+        RandomState randomState = level.getChunkSource().randomState();
+        ChunkPos chunkPos = new ChunkPos(placement);
+
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                ChunkPos tryPos = new ChunkPos(chunkPos.x + dx, chunkPos.z + dz);
+                try {
+                    StructureStart start = structure.generate(
+                            level.registryAccess(),
+                            level.getChunkSource().getGenerator(),
+                            level.getChunkSource().getGenerator().getBiomeSource(),
+                            randomState,
+                            level.getStructureManager(),
+                            level.getSeed(),
+                            tryPos,
+                            0,
+                            level,
+                            holder -> true
+                    );
+                    if (start != null && start != StructureStart.INVALID_START) {
+                        BlockPos resultPos = new BlockPos(tryPos.getMinBlockX(), 0, tryPos.getMinBlockZ());
+                        BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: Structure.generate() succeeded at chunk ({}, {})",
+                                tryPos.x, tryPos.z);
+                        return new GenerateResult(resultPos, tryPos, start);
+                    }
+                } catch (Exception e) {
+                    BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Fallback: Structure.generate() threw at chunk ({}, {}): {}",
+                            tryPos.x, tryPos.z, e.getMessage());
+                }
+            }
+        }
+
+        BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: Structure.generate() failed even in forced biome zone for {}", structureId);
         return null;
     }
 
