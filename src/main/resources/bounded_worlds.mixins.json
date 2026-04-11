@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.denlille.bounded_worlds.mixin",
+  "refmap": "mixins.bounded_worlds.refmap.json",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "BiomeSourceMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
