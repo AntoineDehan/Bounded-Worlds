@@ -13,8 +13,10 @@ import net.denlille.bounded_worlds.config.CompassDirection;
 import net.denlille.bounded_worlds.config.ModConfigs;
 import net.denlille.bounded_worlds.structure.StructureScanner;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -24,7 +26,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 public class WorldBorderHandler {
@@ -166,11 +170,14 @@ public class WorldBorderHandler {
         if (!zones.isEmpty()) {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Registered {} forced biome zone(s).", zones.size());
 
-            // Inject forced biome zones into the scan result so StructureScanner can use them
+            // Enrich the scan result with the forced zones so StructureScanner can use them
+            // (ScanResult is immutable — we build a merged copy instead of mutating it)
+            Map<Holder<Biome>, BlockPos> zoneLocations = new HashMap<>();
             for (ForcedBiomeZone zone : zones) {
                 BlockPos zonePos = new BlockPos(zone.centerX(), 64, zone.centerZ());
-                result.biomeLocations().putIfAbsent(zone.biome(), zonePos);
+                zoneLocations.putIfAbsent(zone.biome(), zonePos);
             }
+            result = result.withAdditionalBiomeLocations(zoneLocations);
         }
 
         return result;
