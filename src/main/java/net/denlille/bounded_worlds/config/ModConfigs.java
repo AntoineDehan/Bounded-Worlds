@@ -12,6 +12,9 @@ public class ModConfigs {
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_BIOMES;
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
+    public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
+    public static final ForgeConfigSpec.EnumValue<CompassDirection> HOT_DIRECTION;
+    public static final ForgeConfigSpec.EnumValue<CompassDirection> HUMID_DIRECTION;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -50,7 +53,33 @@ public class ModConfigs {
                         List.of(),
                         obj -> obj instanceof String s && !s.isBlank());
 
-        builder.pop();
+        builder.pop(); // world
+
+        builder.comment("Terraria-style directional biome placement.",
+                         "When enabled, biomes are placed based on temperature and humidity axes.",
+                         "Hot biomes go in one direction, cold in the opposite.",
+                         "Humid biomes go in a perpendicular direction, dry in the opposite.");
+        builder.push("directional");
+
+        DIRECTIONAL_ENABLED = builder
+                .comment("Enable directional biome placement.",
+                         "When enabled, forced biome zones are placed in the correct quadrant",
+                         "based on their temperature (hot/cold) and humidity (humid/dry).")
+                .define("enabled", false);
+
+        HOT_DIRECTION = builder
+                .comment("Compass direction for hot biomes. Cold biomes go in the opposite direction.",
+                         "NORTH, SOUTH, EAST, WEST, or RANDOM (chosen from world seed).",
+                         "Must be perpendicular to humidDirection (unless RANDOM).")
+                .defineEnum("hotDirection", CompassDirection.SOUTH);
+
+        HUMID_DIRECTION = builder
+                .comment("Compass direction for humid biomes. Dry biomes go in the opposite direction.",
+                         "NORTH, SOUTH, EAST, WEST, or RANDOM (chosen from world seed).",
+                         "Must be perpendicular to hotDirection (unless RANDOM).")
+                .defineEnum("humidDirection", CompassDirection.EAST);
+
+        builder.pop(); // directional
 
         SPEC = builder.build();
     }
