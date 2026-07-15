@@ -10,6 +10,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.biome.Climate;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -28,6 +30,7 @@ public class BiomeZonePlanner {
             @Nullable DirectionalPlacement directional) {
 
         Registry<Biome> biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
+        BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
         long worldSeed = level.getSeed();
         Random random = new Random(worldSeed);
 
@@ -57,10 +60,27 @@ public class BiomeZonePlanner {
             BiomeClimateClassifier.TemperatureCategory tempCategory = BiomeClimateClassifier.getTemperature(chosenBiome);
             BiomeClimateClassifier.HumidityCategory humidCategory = BiomeClimateClassifier.getHumidity(chosenBiome);
 
-            // 4. Find a compatible location
-            BlockPos placement = findCompatibleLocation(
-                    tempCategory, humidCategory, scanResult.biomeLocations(),
-                    centerX, centerZ, worldRadius, zoneSize, plannedZones, random, directional);
+            // 4. Find a location — preferably where the existing climate already
+            // fits the biome, so the terrain under the zone matches (no ocean
+            // painted on hills, no peaks biome on flat ground).
+            List<Climate.ParameterPoint> targetPoints = ClimateMatcher.getParameterPoints(chosenBiome, biomeSource);
+            BlockPos placement = null;
+            String placementMode = "climate-matched";
+
+            if (!targetPoints.isEmpty() && !scanResult.climateSamples().isEmpty()) {
+                placement = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
+                        centerX, centerZ, worldRadius, zoneSize, plannedZones,
+                        directional, tempCategory, humidCategory);
+            }
+
+            if (placement == null) {
+                placementMode = "category fallback";
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] No climate-compatible terrain found for {} — " +
+                        "falling back to approximate placement, terrain may look artificial.", biomeName);
+                placement = findCompatibleLocation(
+                        tempCategory, humidCategory, scanResult.biomeLocations(),
+                        centerX, centerZ, worldRadius, zoneSize, plannedZones, random, directional);
+            }
 
             if (placement == null) {
                 // Fallback: place at a random position in the correct region
@@ -79,8 +99,8 @@ public class BiomeZonePlanner {
             ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc);
             plannedZones.add(zone);
 
-            BoundedWorlds.LOGGER.info("[Bounded Worlds] Planned forced zone: {} at ({}, {}), size {} ({}){}",
-                    desc, placement.getX(), placement.getZ(), zoneSize, sizeCategory.name(), dirInfo);
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] Planned forced zone: {} at ({}, {}), size {} ({}, {}){}",
+                    desc, placement.getX(), placement.getZ(), zoneSize, sizeCategory.name(), placementMode, dirInfo);
         }
 
         return plannedZones;
@@ -102,6 +122,48 @@ public class BiomeZonePlanner {
 
         if (tagged.isEmpty()) return null;
         return tagged.get(random.nextInt(tagged.size()));
+    }
+
+    /**
+     * Picks the candidate position whose sampled climate is closest to any of the
+     * biome's parameter points, among candidates satisfying the placement
+     * constraints. Deterministic: candidates are iterated in scan order and only
+     * a strictly better distance replaces the current best.
+     */
+    @Nullable
+    private static BlockPos findClimateMatchedLocation(
+            List<Climate.ParameterPoint> targetPoints,
+            List<BiomeScanner.ClimateSample> candidates,
+            int centerX, int centerZ, int worldRadius, int zoneSize,
+            List<ForcedBiomeZone> existingZones,
+            @Nullable DirectionalPlacement directional,
+            BiomeClimateClassifier.TemperatureCategory targetTemp,
+            BiomeClimateClassifier.HumidityCategory targetHumid) {
+
+        long bestDist = Long.MAX_VALUE;
+        BlockPos best = null;
+
+        for (BiomeScanner.ClimateSample sample : candidates) {
+            if (!isValidPlacement(sample.x(), sample.z(), centerX, centerZ, worldRadius, zoneSize, existingZones)) {
+                continue;
+            }
+            if (directional != null && !directional.isInCorrectRegion(
+                    sample.x(), sample.z(), centerX, centerZ, worldRadius, targetTemp, targetHumid)) {
+                continue;
+            }
+
+            long dist = ClimateMatcher.bestDistanceSq(sample.climate(), targetPoints);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = new BlockPos(sample.x(), 0, sample.z());
+            }
+        }
+
+        if (best != null) {
+            BoundedWorlds.LOGGER.debug("[Bounded Worlds] Best climate match at ({}, {}), distanceSq={}",
+                    best.getX(), best.getZ(), bestDist);
+        }
+        return best;
     }
 
     @Nullable
