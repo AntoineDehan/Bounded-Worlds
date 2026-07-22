@@ -34,6 +34,14 @@ public class BiomeZonePlanner {
         long worldSeed = level.getSeed();
         Random random = new Random(worldSeed);
 
+        Climate.Sampler sampler = null;
+        try {
+            sampler = level.getChunkSource().randomState().sampler();
+        } catch (Exception e) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] No Climate.Sampler available for zone planning — " +
+                    "climate morph targets will use the biome's first parameter point.");
+        }
+
         BlockPos spawnPos = level.getSharedSpawnPos();
         int centerX = spawnPos.getX();
         int centerZ = spawnPos.getZ();
@@ -41,8 +49,27 @@ public class BiomeZonePlanner {
         List<ForcedBiomeZone> plannedZones = new ArrayList<>();
 
         for (BiomeRequirement req : missing) {
-            // 1. Pick a concrete biome for this requirement
-            Holder<Biome> chosenBiome = pickBiome(req, biomeRegistry, random);
+            // 1. Generate a random size for this zone
+            int zoneSize = sizeCategory.randomSize(random);
+
+            // 2. Pick a concrete biome. For tags, prefer the member whose climate
+            // best matches the available terrain (joint biome+location choice);
+            // otherwise fall back to a seeded random member.
+            Holder<Biome> chosenBiome;
+            BlockPos placement = null;
+            String placementMode = "climate-matched";
+
+            TagMatch tagMatch = req.isTag()
+                    ? findBestTagMember(req, biomeRegistry, biomeSource, scanResult.climateSamples(),
+                            centerX, centerZ, worldRadius, zoneSize, plannedZones, directional)
+                    : null;
+            if (tagMatch != null) {
+                chosenBiome = tagMatch.biome();
+                placement = tagMatch.pos();
+            } else {
+                chosenBiome = pickBiome(req, biomeRegistry, random);
+            }
+
             if (chosenBiome == null) {
                 BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not find any biome for requirement: {}", req.description());
                 continue;
@@ -53,9 +80,6 @@ public class BiomeZonePlanner {
                     .map(ResourceLocation::toString)
                     .orElse("unknown");
 
-            // 2. Generate a random size for this zone
-            int zoneSize = sizeCategory.randomSize(random);
-
             // 3. Classify the biome (temperature + humidity)
             BiomeClimateClassifier.TemperatureCategory tempCategory = BiomeClimateClassifier.getTemperature(chosenBiome);
             BiomeClimateClassifier.HumidityCategory humidCategory = BiomeClimateClassifier.getHumidity(chosenBiome);
@@ -63,14 +87,16 @@ public class BiomeZonePlanner {
             // 4. Find a location — preferably where the existing climate already
             // fits the biome, so the terrain under the zone matches (no ocean
             // painted on hills, no peaks biome on flat ground).
-            List<Climate.ParameterPoint> targetPoints = ClimateMatcher.getParameterPoints(chosenBiome, biomeSource);
-            BlockPos placement = null;
-            String placementMode = "climate-matched";
-
-            if (!targetPoints.isEmpty() && !scanResult.climateSamples().isEmpty()) {
-                placement = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
-                        centerX, centerZ, worldRadius, zoneSize, plannedZones,
-                        directional, tempCategory, humidCategory);
+            if (placement == null) {
+                List<Climate.ParameterPoint> targetPoints = ClimateMatcher.getParameterPoints(chosenBiome, biomeSource);
+                if (!targetPoints.isEmpty() && !scanResult.climateSamples().isEmpty()) {
+                    PlacementCandidate candidate = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
+                            centerX, centerZ, worldRadius, zoneSize, plannedZones,
+                            directional, tempCategory, humidCategory);
+                    if (candidate != null) {
+                        placement = candidate.pos();
+                    }
+                }
             }
 
             if (placement == null) {
@@ -94,9 +120,18 @@ public class BiomeZonePlanner {
                 continue;
             }
 
+            // 5. Climate morph target for smooth vanilla transitions at the edges.
+            // Null (hard-override-only zone) when the biome has no parameter points.
+            ZoneClimateTarget morphTarget = ClimateMatcher.computeMorphTarget(
+                    chosenBiome, biomeSource, sampler, placement.getX(), placement.getZ());
+            if (morphTarget == null) {
+                BoundedWorlds.LOGGER.info("[Bounded Worlds] No climate parameter points for {} — " +
+                        "zone will use hard override without edge morphing.", biomeName);
+            }
+
             String dirInfo = directional != null ? " [" + tempCategory + "/" + humidCategory + "]" : "";
             String desc = biomeName + " for " + req.description();
-            ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc);
+            ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc, morphTarget);
             plannedZones.add(zone);
 
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Planned forced zone: {} at ({}, {}), size {} ({}, {}){}",
@@ -124,6 +159,12 @@ public class BiomeZonePlanner {
         return tagged.get(random.nextInt(tagged.size()));
     }
 
+    /** A placement position and how well its climate matches the target biome. */
+    private record PlacementCandidate(BlockPos pos, long distSq) {}
+
+    /** A tag member chosen jointly with its best placement. */
+    private record TagMatch(Holder<Biome> biome, BlockPos pos, long distSq) {}
+
     /**
      * Picks the candidate position whose sampled climate is closest to any of the
      * biome's parameter points, among candidates satisfying the placement
@@ -131,7 +172,7 @@ public class BiomeZonePlanner {
      * a strictly better distance replaces the current best.
      */
     @Nullable
-    private static BlockPos findClimateMatchedLocation(
+    private static PlacementCandidate findClimateMatchedLocation(
             List<Climate.ParameterPoint> targetPoints,
             List<BiomeScanner.ClimateSample> candidates,
             int centerX, int centerZ, int worldRadius, int zoneSize,
@@ -162,6 +203,50 @@ public class BiomeZonePlanner {
         if (best != null) {
             BoundedWorlds.LOGGER.debug("[Bounded Worlds] Best climate match at ({}, {}), distanceSq={}",
                     best.getX(), best.getZ(), bestDist);
+            return new PlacementCandidate(best, bestDist);
+        }
+        return null;
+    }
+
+    /**
+     * For a tag requirement, evaluates every member with climate parameter
+     * points and returns the (member, position) pair with the smallest climate
+     * distance — the tag member that best fits the terrain actually available.
+     * Members are iterated in ID order and only a strictly better distance wins,
+     * so the choice is deterministic. Null when no member can be matched
+     * (caller falls back to a seeded random pick).
+     */
+    @Nullable
+    private static TagMatch findBestTagMember(
+            BiomeRequirement req, Registry<Biome> biomeRegistry, BiomeSource biomeSource,
+            List<BiomeScanner.ClimateSample> candidates,
+            int centerX, int centerZ, int worldRadius, int zoneSize,
+            List<ForcedBiomeZone> existingZones,
+            @Nullable DirectionalPlacement directional) {
+
+        TagKey<Biome> tagKey = req.tagKey();
+        if (tagKey == null || candidates.isEmpty()) return null;
+
+        List<Holder<Biome>> members = new ArrayList<>();
+        biomeRegistry.getTagOrEmpty(tagKey).forEach(members::add);
+        members.sort(java.util.Comparator.comparing(h -> h.unwrapKey()
+                .map(ResourceKey::location)
+                .map(ResourceLocation::toString)
+                .orElse("")));
+
+        TagMatch best = null;
+        for (Holder<Biome> member : members) {
+            List<Climate.ParameterPoint> points = ClimateMatcher.getParameterPoints(member, biomeSource);
+            if (points.isEmpty()) continue;
+
+            BiomeClimateClassifier.TemperatureCategory temp = BiomeClimateClassifier.getTemperature(member);
+            BiomeClimateClassifier.HumidityCategory humid = BiomeClimateClassifier.getHumidity(member);
+
+            PlacementCandidate candidate = findClimateMatchedLocation(points, candidates,
+                    centerX, centerZ, worldRadius, zoneSize, existingZones, directional, temp, humid);
+            if (candidate != null && (best == null || candidate.distSq() < best.distSq())) {
+                best = new TagMatch(member, candidate.pos(), candidate.distSq());
+            }
         }
         return best;
     }
@@ -260,8 +345,8 @@ public class BiomeZonePlanner {
     private static boolean isValidPlacement(int px, int pz, int centerX, int centerZ,
                                              int worldRadius, int zoneSize,
                                              List<ForcedBiomeZone> existingZones) {
-        // Max extent of the circular zone with noise distortion (20% amplitude)
-        double maxRadius = (zoneSize / 2.0) * 1.2 + 16; // +16 for transition zone
+        // Max extent of the zone: noise distortion + climate morphing halo
+        double maxRadius = ForcedBiomeZone.maxFootprint(zoneSize);
 
         // Check that the zone fits within the world radius
         long dx = (long)(px - centerX);
@@ -273,8 +358,7 @@ public class BiomeZonePlanner {
 
         // Check no overlap with existing forced zones (circular distance check)
         for (ForcedBiomeZone existing : existingZones) {
-            double existingMaxRadius = (existing.size() / 2.0) * 1.2 + 16;
-            double minDist = existingMaxRadius + maxRadius + 32; // 32 blocks padding
+            double minDist = existing.maxFootprint() + maxRadius + 32; // 32 blocks padding
             double edx = px - existing.centerX();
             double edz = pz - existing.centerZ();
             if (Math.sqrt(edx * edx + edz * edz) < minDist) {
