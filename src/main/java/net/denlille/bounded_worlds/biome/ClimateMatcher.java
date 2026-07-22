@@ -9,6 +9,7 @@ import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -80,6 +81,49 @@ public final class ClimateMatcher {
             best = Math.min(best, distanceSq(sampled, target));
         }
         return best;
+    }
+
+    /**
+     * The parameter point closest to the sampled climate (first wins ties —
+     * deterministic as long as the input list order is stable).
+     */
+    @Nullable
+    public static Climate.ParameterPoint nearestParameterPoint(Climate.TargetPoint sampled,
+                                                               List<Climate.ParameterPoint> points) {
+        Climate.ParameterPoint best = null;
+        long bestDist = Long.MAX_VALUE;
+        for (Climate.ParameterPoint point : points) {
+            long dist = distanceSq(sampled, point);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = point;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Builds the climate target a forced zone should morph toward: the biome's
+     * parameter point closest to the natural climate at the zone position
+     * (minimal disturbance), reduced to its midpoint values. Null when the
+     * biome has no parameter points — the zone then stays a hard override.
+     */
+    @Nullable
+    public static ZoneClimateTarget computeMorphTarget(Holder<Biome> biome, BiomeSource biomeSource,
+                                                       @Nullable Climate.Sampler sampler,
+                                                       int blockX, int blockZ) {
+        List<Climate.ParameterPoint> points = getParameterPoints(biome, biomeSource);
+        if (points.isEmpty()) {
+            return null;
+        }
+        Climate.ParameterPoint chosen;
+        if (sampler != null) {
+            Climate.TargetPoint sampled = sampler.sample(blockX >> 2, 64 >> 2, blockZ >> 2);
+            chosen = nearestParameterPoint(sampled, points);
+        } else {
+            chosen = points.get(0);
+        }
+        return chosen == null ? null : ZoneClimateTarget.fromParameterPoint(chosen);
     }
 
     private static long distanceTo(Climate.Parameter parameter, long value) {

@@ -286,7 +286,7 @@ public class StructureScanner {
         int centerZ = center.getZ();
         int borderPadding = 100;
         int effectiveRadius = radius - borderPadding;
-        double zoneMaxRadius = (zoneSize / 2.0) * 1.2 + 16; // account for noise distortion
+        double zoneMaxRadius = ForcedBiomeZone.maxFootprint(zoneSize); // noise distortion + morphing halo
 
         BlockPos placement = null;
         for (int attempt = 0; attempt < 50; attempt++) {
@@ -302,8 +302,7 @@ public class StructureScanner {
             // Verify no overlap with existing forced zones
             boolean overlaps = false;
             for (ForcedBiomeZone existing : ForcedBiomeZoneManager.getZones()) {
-                double existingMaxR = (existing.size() / 2.0) * 1.2 + 16;
-                double minDist = existingMaxR + zoneMaxRadius + 32;
+                double minDist = existing.maxFootprint() + zoneMaxRadius + 32;
                 double edx = px - existing.centerX();
                 double edz = pz - existing.centerZ();
                 if (Math.sqrt(edx * edx + edz * edz) < minDist) {
@@ -322,9 +321,20 @@ public class StructureScanner {
             return null;
         }
 
-        // Create and register the forced biome zone
+        // Create and register the forced biome zone, with a climate morph target
+        // for smooth vanilla transitions at the edges (null = hard override only)
+        net.denlille.bounded_worlds.biome.ZoneClimateTarget morphTarget = null;
+        try {
+            morphTarget = net.denlille.bounded_worlds.biome.ClimateMatcher.computeMorphTarget(
+                    chosenBiome, level.getChunkSource().getGenerator().getBiomeSource(),
+                    level.getChunkSource().randomState().sampler(),
+                    placement.getX(), placement.getZ());
+        } catch (Exception e) {
+            BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Fallback: no climate morph target available: {}", e.getMessage());
+        }
+
         String desc = biomeName + " (fallback for " + structureId + ")";
-        ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc);
+        ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc, morphTarget);
         ForcedBiomeZoneManager.addZone(zone);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: created forced biome zone {} at ({}, {}), size {}",
