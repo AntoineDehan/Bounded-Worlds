@@ -90,9 +90,25 @@ public class BiomeZonePlanner {
             if (placement == null) {
                 List<Climate.ParameterPoint> targetPoints = ClimateMatcher.getParameterPoints(chosenBiome, biomeSource);
                 if (!targetPoints.isEmpty() && !scanResult.climateSamples().isEmpty()) {
+                    ClimateMatcher.TerrainKind terrainKind = ClimateMatcher.targetTerrainKind(targetPoints);
                     PlacementCandidate candidate = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
                             centerX, centerZ, worldRadius, zoneSize, plannedZones,
-                            directional, tempCategory, humidCategory);
+                            directional, tempCategory, humidCategory, terrainKind);
+
+                    // Absolute backup: no compatible terrain at all in the radius
+                    // (e.g. land biome on an all-ocean map). The guarantee still
+                    // holds — place at the best available climate, but say so loudly.
+                    if (candidate == null && terrainKind != ClimateMatcher.TerrainKind.EITHER) {
+                        BoundedWorlds.LOGGER.warn("[Bounded Worlds] No {} terrain found within the world radius for {} — " +
+                                        "placing at the best available spot instead; the biome may end up {}.",
+                                terrainKind == ClimateMatcher.TerrainKind.LAND ? "land" : "ocean", biomeName,
+                                terrainKind == ClimateMatcher.TerrainKind.LAND ? "underwater" : "on dry land");
+                        placementMode = "climate-matched (terrain mismatch)";
+                        candidate = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
+                                centerX, centerZ, worldRadius, zoneSize, plannedZones,
+                                directional, tempCategory, humidCategory, ClimateMatcher.TerrainKind.EITHER);
+                    }
+
                     if (candidate != null) {
                         placement = candidate.pos();
                     }
@@ -179,12 +195,18 @@ public class BiomeZonePlanner {
             List<ForcedBiomeZone> existingZones,
             @Nullable DirectionalPlacement directional,
             BiomeClimateClassifier.TemperatureCategory targetTemp,
-            BiomeClimateClassifier.HumidityCategory targetHumid) {
+            BiomeClimateClassifier.HumidityCategory targetHumid,
+            ClimateMatcher.TerrainKind requiredTerrain) {
 
         long bestDist = Long.MAX_VALUE;
         BlockPos best = null;
 
         for (BiomeScanner.ClimateSample sample : candidates) {
+            // Land/sea guard: a land biome on the ocean floor (or an ocean biome
+            // on land) is invisible in practice — reject incompatible terrain.
+            if (!ClimateMatcher.matchesTerrainKind(sample.climate(), requiredTerrain)) {
+                continue;
+            }
             if (!isValidPlacement(sample.x(), sample.z(), centerX, centerZ, worldRadius, zoneSize, existingZones)) {
                 continue;
             }
@@ -234,6 +256,34 @@ public class BiomeZonePlanner {
                 .map(ResourceLocation::toString)
                 .orElse("")));
 
+        // First pass: only placements on terrain compatible with each member.
+        TagMatch best = evaluateTagMembers(members, biomeSource, candidates,
+                centerX, centerZ, worldRadius, zoneSize, existingZones, directional, true);
+
+        // Absolute backup: no member has compatible terrain in the radius —
+        // take the best available climate anyway so the guarantee holds.
+        if (best == null) {
+            best = evaluateTagMembers(members, biomeSource, candidates,
+                    centerX, centerZ, worldRadius, zoneSize, existingZones, directional, false);
+            if (best != null) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] No terrain-compatible spot for any member of {} — " +
+                        "placing {} at the best available climate; it may look out of place.",
+                        req.description(),
+                        best.biome().unwrapKey().map(ResourceKey::location).map(ResourceLocation::toString).orElse("unknown"));
+            }
+        }
+        return best;
+    }
+
+    @Nullable
+    private static TagMatch evaluateTagMembers(
+            List<Holder<Biome>> members, BiomeSource biomeSource,
+            List<BiomeScanner.ClimateSample> candidates,
+            int centerX, int centerZ, int worldRadius, int zoneSize,
+            List<ForcedBiomeZone> existingZones,
+            @Nullable DirectionalPlacement directional,
+            boolean enforceTerrainKind) {
+
         TagMatch best = null;
         for (Holder<Biome> member : members) {
             List<Climate.ParameterPoint> points = ClimateMatcher.getParameterPoints(member, biomeSource);
@@ -241,9 +291,12 @@ public class BiomeZonePlanner {
 
             BiomeClimateClassifier.TemperatureCategory temp = BiomeClimateClassifier.getTemperature(member);
             BiomeClimateClassifier.HumidityCategory humid = BiomeClimateClassifier.getHumidity(member);
+            ClimateMatcher.TerrainKind terrainKind = enforceTerrainKind
+                    ? ClimateMatcher.targetTerrainKind(points)
+                    : ClimateMatcher.TerrainKind.EITHER;
 
             PlacementCandidate candidate = findClimateMatchedLocation(points, candidates,
-                    centerX, centerZ, worldRadius, zoneSize, existingZones, directional, temp, humid);
+                    centerX, centerZ, worldRadius, zoneSize, existingZones, directional, temp, humid, terrainKind);
             if (candidate != null && (best == null || candidate.distSq() < best.distSq())) {
                 best = new TagMatch(member, candidate.pos(), candidate.distSq());
             }
