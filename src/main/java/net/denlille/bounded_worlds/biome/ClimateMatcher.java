@@ -23,6 +23,40 @@ public final class ClimateMatcher {
 
     private ClimateMatcher() {}
 
+    // Vanilla boundary between ocean and coast continentalness (OverworldBiomeBuilder)
+    private static final long COAST_THRESHOLD = Climate.quantizeCoord(-0.19f);
+
+    /** What kind of terrain a biome needs so it doesn't end up invisible. */
+    public enum TerrainKind { OCEANIC, LAND, EITHER }
+
+    /**
+     * Classifies a biome's terrain needs from its continentalness ranges:
+     * fully below the coast threshold → OCEANIC, fully above → LAND,
+     * points on both sides → EITHER.
+     */
+    public static TerrainKind targetTerrainKind(List<Climate.ParameterPoint> points) {
+        boolean anyOcean = false;
+        boolean anyLand = false;
+        for (Climate.ParameterPoint point : points) {
+            if (point.continentalness().max() <= COAST_THRESHOLD) {
+                anyOcean = true;
+            } else {
+                anyLand = true;
+            }
+        }
+        if (anyOcean && anyLand) return TerrainKind.EITHER;
+        return anyOcean ? TerrainKind.OCEANIC : TerrainKind.LAND;
+    }
+
+    /** Whether a sampled position's terrain is compatible with the given kind. */
+    public static boolean matchesTerrainKind(Climate.TargetPoint sample, TerrainKind kind) {
+        return switch (kind) {
+            case EITHER -> true;
+            case OCEANIC -> sample.continentalness() < COAST_THRESHOLD;
+            case LAND -> sample.continentalness() >= COAST_THRESHOLD;
+        };
+    }
+
     /**
      * Returns the climate parameter points that select the given biome in the
      * vanilla multi-noise parameter list. Empty if the biome source is not
