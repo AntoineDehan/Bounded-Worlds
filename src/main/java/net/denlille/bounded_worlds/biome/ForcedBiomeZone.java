@@ -26,13 +26,13 @@ public final class ForcedBiomeZone {
     @javax.annotation.Nullable
     private final ZoneClimateTarget climateTarget;
 
-    // S1: Pre-computed derived values for hot-path performance
+    // Pre-computed derived values for hot-path performance
     private final double radius;
     private final double haloWidth;
     private final double maxPossibleRadiusSq;
     private final double morphMaxRadiusSq;
     private final double minPossibleRadiusSq;
-    // I4: Zone-specific noise offsets for visual variety between zones
+    // Zone-specific noise offsets for visual variety between zones
     private final int noiseOffsetX;
     private final int noiseOffsetZ;
 
@@ -49,11 +49,10 @@ public final class ForcedBiomeZone {
         this.description = description;
         this.climateTarget = climateTarget;
 
-        // Pre-compute
         this.radius = size / 2.0;
         this.haloWidth = Math.min(MAX_HALO_WIDTH, Math.max(MIN_HALO_WIDTH, radius * HALO_FRACTION));
 
-        // I1: Pre-compute squared radii for fast reject/accept without sqrt
+        // Pre-compute squared radii for fast reject/accept without sqrt
         double maxR = radius * (1.0 + NOISE_AMPLITUDE);
         this.maxPossibleRadiusSq = maxR * maxR;
         double morphMaxR = maxR + haloWidth;
@@ -62,7 +61,7 @@ public final class ForcedBiomeZone {
         double minR = radius * (1.0 - NOISE_AMPLITUDE);
         this.minPossibleRadiusSq = minR * minR;
 
-        // I4: Derive noise offsets from zone center for unique shapes per zone
+        // Derive noise offsets from zone center for unique shapes per zone
         this.noiseOffsetX = centerX * 7 + centerZ * 13;
         this.noiseOffsetZ = centerZ * 7 + centerX * 17;
     }
@@ -100,7 +99,7 @@ public final class ForcedBiomeZone {
         double dx = blockX - centerX;
         double dz = blockZ - centerZ;
 
-        // I1: Compare squared distances first — avoids sqrt in ~95% of calls
+        // Compare squared distances first — avoids sqrt in ~95% of calls
         double distSq = dx * dx + dz * dz;
 
         // Quick reject
@@ -112,7 +111,7 @@ public final class ForcedBiomeZone {
         // Now compute sqrt only for the borderline cases
         double distance = Math.sqrt(distSq);
 
-        // I4: Noise uses zone-specific offsets for unique shapes
+        // Noise uses zone-specific offsets for unique shapes
         double noiseValue = sampleNoise(blockX + noiseOffsetX, blockZ + noiseOffsetZ, radius);
         double effectiveRadius = radius + noiseValue * radius * NOISE_AMPLITUDE;
 

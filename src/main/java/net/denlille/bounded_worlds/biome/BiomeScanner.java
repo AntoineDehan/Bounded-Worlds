@@ -19,9 +19,9 @@ import java.util.Set;
 
 public class BiomeScanner {
 
-    // I2 fix: reduced from 64 to 16 for better accuracy (matches biome resolution of 4 blocks)
+    // 16-block step balances scan time and accuracy (biome resolution is 4 blocks)
     private static final int SAMPLE_STEP = 16;
-    // S4 fix: scan at both surface and underground
+    // Scan both surface and underground to catch cave biomes
     private static final int[] SAMPLE_Y_LEVELS = {64, -32};
     // Coarser grid of climate samples used as zone placement candidates (~7k points at radius 3000)
     private static final int CANDIDATE_STEP = 64;
