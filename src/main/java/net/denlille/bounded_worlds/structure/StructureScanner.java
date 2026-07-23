@@ -89,7 +89,7 @@ public class StructureScanner {
             HolderSet<Biome> validBiomes = structure.biomes();
             BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure {} requires biomes: {}", idStr, validBiomes);
 
-            // I1 fix: generate StructureStart once and pass it to forcePlace
+            // Generate the StructureStart once and pass it to forcePlace
             GenerateResult generateResult = findValidPlacementAndGenerate(level, structure, biomeScanResult, spawnPos, radius, random, idStr);
 
             // Fallback: if no existing biome worked, force a dedicated biome zone and retry

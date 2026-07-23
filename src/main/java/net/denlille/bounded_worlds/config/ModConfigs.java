@@ -31,7 +31,7 @@ public class ModConfigs {
         REQUIRED_BIOMES = builder
                 .comment("List of biomes or biome tags required within the world border.",
                          "Use biome IDs: \"minecraft:mushroom_fields\"",
-                         "Use tags with # prefix: \"#forge:is_jungle\"",
+                         "Use tags with # prefix: \"#minecraft:is_jungle\" or \"#forge:is_hot\"",
                          "On server start, the mod scans and reports which are present or missing.")
                 .defineListAllowEmpty("requiredBiomes",
                         List.of(),

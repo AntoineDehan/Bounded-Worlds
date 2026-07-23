@@ -73,7 +73,7 @@ public class WorldBorderHandler {
         }
 
         // Phase 2: Biome guarantee (always runs — zones are in-memory only)
-        // S2 fix: Always clear zones on startup to avoid stale data from previous session
+        // Always clear zones on startup to avoid stale data from a previous session
         ForcedBiomeZoneManager.clear();
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(overworld, radius, directional);
 

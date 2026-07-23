@@ -10,7 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class ForcedBiomeZoneManager {
 
-    // C1 fix: CopyOnWriteArrayList for thread-safety (server thread writes, worldgen threads read)
+    // CopyOnWriteArrayList for thread-safety (server thread writes, worldgen threads read)
     private static final List<ForcedBiomeZone> zones = new CopyOnWriteArrayList<>();
 
     public static void clear() {
