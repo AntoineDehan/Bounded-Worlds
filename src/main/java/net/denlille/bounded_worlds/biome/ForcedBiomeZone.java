@@ -11,10 +11,10 @@ public final class ForcedBiomeZone {
 
     // Noise distorts the circular boundary by ±20% of the radius
     private static final double NOISE_AMPLITUDE = 0.2;
-    // Transition zone width: up to 16 blocks of soft blending at edges
-    private static final double MAX_TRANSITION_WIDTH = 16.0;
-    // Transition zone as fraction of radius (used if radius is small)
-    private static final double TRANSITION_FRACTION = 0.15;
+    // Climate morphing halo around the zone: bounds for the fade-out band width
+    private static final double MIN_HALO_WIDTH = 24.0;
+    private static final double MAX_HALO_WIDTH = 64.0;
+    private static final double HALO_FRACTION = 0.4;
 
     // Core zone data
     private final int centerX;
@@ -22,36 +22,46 @@ public final class ForcedBiomeZone {
     private final int size;
     private final Holder<Biome> biome;
     private final String description;
+    // Climate values the halo morphs toward; null = hard-override-only zone
+    @javax.annotation.Nullable
+    private final ZoneClimateTarget climateTarget;
 
-    // S1: Pre-computed derived values for hot-path performance
+    // Pre-computed derived values for hot-path performance
     private final double radius;
-    private final double transitionWidth;
+    private final double haloWidth;
     private final double maxPossibleRadiusSq;
+    private final double morphMaxRadiusSq;
     private final double minPossibleRadiusSq;
-    // I4: Zone-specific noise offsets for visual variety between zones
+    // Zone-specific noise offsets for visual variety between zones
     private final int noiseOffsetX;
     private final int noiseOffsetZ;
 
     public ForcedBiomeZone(int centerX, int centerZ, int size, Holder<Biome> biome, String description) {
+        this(centerX, centerZ, size, biome, description, null);
+    }
+
+    public ForcedBiomeZone(int centerX, int centerZ, int size, Holder<Biome> biome, String description,
+                           @javax.annotation.Nullable ZoneClimateTarget climateTarget) {
         this.centerX = centerX;
         this.centerZ = centerZ;
         this.size = size;
         this.biome = biome;
         this.description = description;
+        this.climateTarget = climateTarget;
 
-        // Pre-compute
         this.radius = size / 2.0;
-        this.transitionWidth = Math.min(MAX_TRANSITION_WIDTH, radius * TRANSITION_FRACTION);
+        this.haloWidth = Math.min(MAX_HALO_WIDTH, Math.max(MIN_HALO_WIDTH, radius * HALO_FRACTION));
 
-        // I1: Pre-compute squared radii for fast reject/accept without sqrt
-        double maxR = radius * (1.0 + NOISE_AMPLITUDE) + MAX_TRANSITION_WIDTH;
+        // Pre-compute squared radii for fast reject/accept without sqrt
+        double maxR = radius * (1.0 + NOISE_AMPLITUDE);
         this.maxPossibleRadiusSq = maxR * maxR;
+        double morphMaxR = maxR + haloWidth;
+        this.morphMaxRadiusSq = morphMaxR * morphMaxR;
 
-        // I2: Guard against negative minPossibleRadius
-        double minR = radius * (1.0 - NOISE_AMPLITUDE) - MAX_TRANSITION_WIDTH;
-        this.minPossibleRadiusSq = minR > 0 ? minR * minR : -1; // -1 means skip quick-accept
+        double minR = radius * (1.0 - NOISE_AMPLITUDE);
+        this.minPossibleRadiusSq = minR * minR;
 
-        // I4: Derive noise offsets from zone center for unique shapes per zone
+        // Derive noise offsets from zone center for unique shapes per zone
         this.noiseOffsetX = centerX * 7 + centerZ * 13;
         this.noiseOffsetZ = centerZ * 7 + centerX * 17;
     }
@@ -62,44 +72,76 @@ public final class ForcedBiomeZone {
     public int size() { return size; }
     public Holder<Biome> biome() { return biome; }
     public String description() { return description; }
+    @javax.annotation.Nullable
+    public ZoneClimateTarget climateTarget() { return climateTarget; }
+
+    /**
+     * Largest possible extent of the zone including noise distortion and the
+     * climate morphing halo — used by planners for spacing constraints.
+     */
+    public double maxFootprint() {
+        return radius * (1.0 + NOISE_AMPLITUDE) + haloWidth;
+    }
+
+    /** Same as {@link #maxFootprint()} for a zone that does not exist yet. */
+    public static double maxFootprint(int size) {
+        double r = size / 2.0;
+        double halo = Math.min(MAX_HALO_WIDTH, Math.max(MIN_HALO_WIDTH, r * HALO_FRACTION));
+        return r * (1.0 + NOISE_AMPLITUDE) + halo;
+    }
 
     /**
      * Checks if a block position falls within this zone.
-     * Uses a circular base shape + noise distortion + probabilistic transition at edges.
+     * Deterministic noised circular boundary — the visual blending at edges is
+     * handled by the climate morphing halo (see morphFactor), not by dithering.
      */
     public boolean contains(int blockX, int blockZ) {
         double dx = blockX - centerX;
         double dz = blockZ - centerZ;
 
-        // I1: Compare squared distances first — avoids sqrt in ~95% of calls
+        // Compare squared distances first — avoids sqrt in ~95% of calls
         double distSq = dx * dx + dz * dz;
 
         // Quick reject
         if (distSq > maxPossibleRadiusSq) return false;
 
-        // Quick accept (I2: only if minPossibleRadius was positive)
-        if (minPossibleRadiusSq > 0 && distSq < minPossibleRadiusSq) return true;
+        // Quick accept
+        if (distSq < minPossibleRadiusSq) return true;
 
         // Now compute sqrt only for the borderline cases
         double distance = Math.sqrt(distSq);
 
-        // I4: Noise uses zone-specific offsets for unique shapes
+        // Noise uses zone-specific offsets for unique shapes
         double noiseValue = sampleNoise(blockX + noiseOffsetX, blockZ + noiseOffsetZ, radius);
         double effectiveRadius = radius + noiseValue * radius * NOISE_AMPLITUDE;
 
-        // Transition zone for soft blending
-        double innerEdge = effectiveRadius - transitionWidth;
+        return distance <= effectiveRadius;
+    }
 
-        // Inside the solid core
-        if (distance <= innerEdge) return true;
-        // Outside the outer edge
-        if (distance >= effectiveRadius) return false;
+    /**
+     * Strength of the climate morphing at a block position: 1 inside the zone,
+     * fading smoothly to 0 across the halo band outside the noised boundary.
+     * Always 0 when the zone has no climate target.
+     */
+    public double morphFactor(int blockX, int blockZ) {
+        if (climateTarget == null) return 0;
 
-        // In the transition zone: probability decreases from 1 (inner) to 0 (outer)
-        double t = (distance - innerEdge) / transitionWidth;
-        double threshold = 1.0 - (t * t); // quadratic falloff for smoother transition
-        double hash = coordHash(blockX, blockZ);
-        return hash < threshold;
+        double dx = blockX - centerX;
+        double dz = blockZ - centerZ;
+        double distSq = dx * dx + dz * dz;
+
+        if (distSq > morphMaxRadiusSq) return 0;
+        if (distSq < minPossibleRadiusSq) return 1;
+
+        double distance = Math.sqrt(distSq);
+        double noiseValue = sampleNoise(blockX + noiseOffsetX, blockZ + noiseOffsetZ, radius);
+        double effectiveRadius = radius + noiseValue * radius * NOISE_AMPLITUDE;
+
+        if (distance <= effectiveRadius) return 1;
+        if (distance >= effectiveRadius + haloWidth) return 0;
+
+        double t = 1.0 - (distance - effectiveRadius) / haloWidth;
+        return t * t * (3 - 2 * t); // smoothstep for a gradual climate blend
     }
 
     /**
@@ -165,16 +207,6 @@ public final class ForcedBiomeZone {
     private static double hashToDouble(int x, int z) {
         long h = x * 3129871L ^ (long) z * 116129781L;
         h = h * h * 42317861L + h * 11L;
-        return ((h >> 16) & 0xFFFFL) / 65536.0;
-    }
-
-    /**
-     * Hash a block coordinate to a double in [0, 1) for transition probability.
-     * Uses different constants to avoid correlation with the noise function.
-     */
-    private static double coordHash(int x, int z) {
-        long h = x * 6364136223846793005L ^ (long) z * 1442695040888963407L;
-        h = h * h * 6364136223846793005L + h * 1442695040888963407L;
         return ((h >> 16) & 0xFFFFL) / 65536.0;
     }
 

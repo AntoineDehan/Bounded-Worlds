@@ -5,13 +5,18 @@ import net.denlille.bounded_worlds.biome.BiomeRequirement;
 import net.denlille.bounded_worlds.biome.BiomeScanner;
 import net.denlille.bounded_worlds.biome.BiomeZonePlanner;
 import net.denlille.bounded_worlds.biome.BiomeZoneSize;
+import net.denlille.bounded_worlds.biome.DirectionalClimateManager;
+import net.denlille.bounded_worlds.biome.DirectionalPlacement;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZone;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
+import net.denlille.bounded_worlds.config.CompassDirection;
 import net.denlille.bounded_worlds.config.ModConfigs;
 import net.denlille.bounded_worlds.structure.StructureScanner;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -21,7 +26,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
 
 public class WorldBorderHandler {
 
@@ -54,10 +62,20 @@ public class WorldBorderHandler {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] World already initialized, skipping world border setup.");
         }
 
+        // Build directional placement if enabled
+        DirectionalPlacement directional = buildDirectionalPlacement(overworld.getSeed());
+
+        // Initialize directional climate bias if enabled
+        DirectionalClimateManager.clear();
+        if (directional != null) {
+            DirectionalClimateManager.init(directional, spawnPos.getX(), spawnPos.getZ(), radius);
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] Directional climate bias initialized.");
+        }
+
         // Phase 2: Biome guarantee (always runs — zones are in-memory only)
-        // S2 fix: Always clear zones on startup to avoid stale data from previous session
+        // Always clear zones on startup to avoid stale data from a previous session
         ForcedBiomeZoneManager.clear();
-        BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(overworld, radius);
+        BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(overworld, radius, directional);
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
         if (firstRun) {
@@ -74,7 +92,33 @@ public class WorldBorderHandler {
         }
     }
 
-    private BiomeScanner.ScanResult handleBiomePhase(ServerLevel overworld, int radius) {
+    @javax.annotation.Nullable
+    private DirectionalPlacement buildDirectionalPlacement(long worldSeed) {
+        if (!ModConfigs.DIRECTIONAL_ENABLED.get()) {
+            return null;
+        }
+
+        Random seedRandom = new Random(worldSeed ^ 0xD1EC710AL);
+
+        // Resolve RANDOM directions using the world seed
+        CompassDirection hotDir = ModConfigs.HOT_DIRECTION.get().resolve(seedRandom);
+        CompassDirection humidDir = ModConfigs.HUMID_DIRECTION.get().resolvePerpendicularTo(hotDir, seedRandom);
+
+        // Validate perpendicularity
+        if (!hotDir.isPerpendicularTo(humidDir)) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] hotDirection ({}) and humidDirection ({}) are not perpendicular! Falling back to SOUTH/EAST.",
+                    hotDir, humidDir);
+            hotDir = CompassDirection.SOUTH;
+            humidDir = CompassDirection.EAST;
+        }
+
+        BoundedWorlds.LOGGER.info("[Bounded Worlds] Directional placement enabled: hot={}, cold={}, humid={}, dry={}",
+                hotDir, hotDir.opposite(), humidDir, humidDir.opposite());
+
+        return new DirectionalPlacement(hotDir, humidDir);
+    }
+
+    private BiomeScanner.ScanResult handleBiomePhase(ServerLevel overworld, int radius, @javax.annotation.Nullable DirectionalPlacement directional) {
         List<? extends String> biomeEntries = ModConfigs.REQUIRED_BIOMES.get();
 
         List<BiomeRequirement> requirements = new ArrayList<>();
@@ -117,7 +161,7 @@ public class WorldBorderHandler {
         BiomeZoneSize sizeCategory = ModConfigs.FORCED_BIOME_SIZE.get();
 
         List<ForcedBiomeZone> zones = BiomeZonePlanner.planZones(
-                overworld, result.missing(), result, radius, sizeCategory);
+                overworld, result.missing(), result, radius, sizeCategory, directional);
 
         for (ForcedBiomeZone zone : zones) {
             ForcedBiomeZoneManager.addZone(zone);
@@ -126,11 +170,14 @@ public class WorldBorderHandler {
         if (!zones.isEmpty()) {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Registered {} forced biome zone(s).", zones.size());
 
-            // Inject forced biome zones into the scan result so StructureScanner can use them
+            // Enrich the scan result with the forced zones so StructureScanner can use them
+            // (ScanResult is immutable — we build a merged copy instead of mutating it)
+            Map<Holder<Biome>, BlockPos> zoneLocations = new HashMap<>();
             for (ForcedBiomeZone zone : zones) {
                 BlockPos zonePos = new BlockPos(zone.centerX(), 64, zone.centerZ());
-                result.biomeLocations().putIfAbsent(zone.biome(), zonePos);
+                zoneLocations.putIfAbsent(zone.biome(), zonePos);
             }
+            result = result.withAdditionalBiomeLocations(zoneLocations);
         }
 
         return result;
