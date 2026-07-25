@@ -26,8 +26,8 @@ public class ModConfigs {
                 .comment("World radius in blocks from spawn point.",
                          "The world border will be set to this radius around the spawn.",
                          "Only applied on first world creation. Delete 'bounded_worlds_initialized.dat' in the world folder to re-apply.",
-                         "Note: larger radii mean longer first-launch setup (the biome scan grows with the square of the radius).",
-                         "Note: very small radii may not contain terrain that fits every required biome —",
+                         "Note: a larger radius means a longer first-launch setup (the biome scan grows with the square of the radius).",
+                         "Note: a very small radius may not contain terrain that fits every required biome —",
                          "forced zones then fall back to approximate placement and can look out of place (e.g. underwater).")
                 .defineInRange("worldRadius", 3000, 100, 20000);
 
