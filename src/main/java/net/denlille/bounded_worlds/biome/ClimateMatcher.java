@@ -48,6 +48,11 @@ public final class ClimateMatcher {
         return anyOcean ? TerrainKind.OCEANIC : TerrainKind.LAND;
     }
 
+    /** Whether the sampled position sits on oceanic terrain (below coast continentalness). */
+    public static boolean isOceanicSample(Climate.TargetPoint sample) {
+        return sample.continentalness() < COAST_THRESHOLD;
+    }
+
     /** Whether a sampled position's terrain is compatible with the given kind. */
     public static boolean matchesTerrainKind(Climate.TargetPoint sample, TerrainKind kind) {
         return switch (kind) {

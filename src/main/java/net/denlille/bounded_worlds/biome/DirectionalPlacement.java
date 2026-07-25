@@ -126,50 +126,30 @@ public class DirectionalPlacement {
      */
     public double[] getConstrainedAngleRange(BiomeClimateClassifier.TemperatureCategory temp,
                                               BiomeClimateClassifier.HumidityCategory humidity) {
-        // Start with full circle
-        double minAngle = 0;
-        double maxAngle = 2 * Math.PI;
+        boolean hasTemp = temp != BiomeClimateClassifier.TemperatureCategory.TEMPERATE;
+        boolean hasHumid = humidity != BiomeClimateClassifier.HumidityCategory.NEUTRAL;
 
-        // Constrain by temperature
-        if (temp != BiomeClimateClassifier.TemperatureCategory.TEMPERATE) {
-            CompassDirection dir = (temp == BiomeClimateClassifier.TemperatureCategory.HOT)
-                    ? hotDirection : coldDirection;
-            double[] halfPlane = directionToAngleRange(dir);
-            minAngle = halfPlane[0];
-            maxAngle = halfPlane[1];
+        if (!hasTemp && !hasHumid) {
+            return new double[]{0, 2 * Math.PI};
         }
 
-        // Constrain by humidity (intersect with temperature range)
-        if (humidity != BiomeClimateClassifier.HumidityCategory.NEUTRAL) {
-            CompassDirection dir = (humidity == BiomeClimateClassifier.HumidityCategory.HUMID)
-                    ? humidDirection : dryDirection;
-            double[] halfPlane = directionToAngleRange(dir);
+        CompassDirection tempDir = (temp == BiomeClimateClassifier.TemperatureCategory.HOT)
+                ? hotDirection : coldDirection;
+        CompassDirection humidDir = (humidity == BiomeClimateClassifier.HumidityCategory.HUMID)
+                ? humidDirection : dryDirection;
 
-            if (temp != BiomeClimateClassifier.TemperatureCategory.TEMPERATE) {
-                // Intersect: take the quadrant
-                minAngle = Math.max(minAngle, halfPlane[0]);
-                maxAngle = Math.min(maxAngle, halfPlane[1]);
-            } else {
-                minAngle = halfPlane[0];
-                maxAngle = halfPlane[1];
-            }
+        if (hasTemp && hasHumid) {
+            // Quadrant: a quarter circle centered on the bisector of the two
+            // (perpendicular) directions. Computed via vector addition so
+            // wrap-around ranges (e.g. north+east) are handled correctly.
+            double bisector = Math.atan2(tempDir.getDz() + humidDir.getDz(),
+                                          tempDir.getDx() + humidDir.getDx());
+            return new double[]{bisector - Math.PI / 4, bisector + Math.PI / 4};
         }
 
-        return new double[]{minAngle, maxAngle};
-    }
-
-    /**
-     * Converts a compass direction to an angle range (half-plane).
-     * Minecraft: +X = east, +Z = south.
-     * Angle 0 = east, PI/2 = south, PI = west, 3PI/2 = north.
-     */
-    private static double[] directionToAngleRange(CompassDirection dir) {
-        return switch (dir) {
-            case EAST -> new double[]{-Math.PI / 2, Math.PI / 2};       // -90° to 90°
-            case SOUTH -> new double[]{0, Math.PI};                       // 0° to 180°
-            case WEST -> new double[]{Math.PI / 2, 3 * Math.PI / 2};    // 90° to 270°
-            case NORTH -> new double[]{Math.PI, 2 * Math.PI};            // 180° to 360°
-            default -> new double[]{0, 2 * Math.PI};                      // full circle
-        };
+        // Single constraint: the half circle centered on that direction
+        CompassDirection dir = hasTemp ? tempDir : humidDir;
+        double center = Math.atan2(dir.getDz(), dir.getDx());
+        return new double[]{center - Math.PI / 2, center + Math.PI / 2};
     }
 }

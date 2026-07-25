@@ -62,6 +62,12 @@ public class BiomeClimateClassifier {
     public static TemperatureCategory getTemperature(Holder<Biome> biome) {
         if (biome.is(IS_HOT)) return TemperatureCategory.HOT;
         if (biome.is(IS_COLD)) return TemperatureCategory.COLD;
+
+        // Fallback for biomes without Forge tags (typically modded biomes):
+        // classify by base temperature (desert/savanna = 2.0, snowy = <= 0.05)
+        float temperature = biome.value().getBaseTemperature();
+        if (temperature >= 1.0f) return TemperatureCategory.HOT;
+        if (temperature <= 0.15f) return TemperatureCategory.COLD;
         return TemperatureCategory.TEMPERATE;
     }
 
@@ -71,8 +77,17 @@ public class BiomeClimateClassifier {
                 .orElse(null);
         if (biomeId == null) return HumidityCategory.NEUTRAL;
 
+        // Curated vanilla lists take precedence
         if (HUMID_BIOMES.contains(biomeId)) return HumidityCategory.HUMID;
         if (DRY_BIOMES.contains(biomeId)) return HumidityCategory.DRY;
+
+        // Fallback for unlisted (typically modded) biomes: downfall heuristic.
+        // The humid check is skipped for cold biomes — snowy biomes have high
+        // downfall (frozen_peaks: 0.9) but snow is not a humid climate.
+        float downfall = biome.value().getModifiedClimateSettings().downfall();
+        float temperature = biome.value().getBaseTemperature();
+        if (downfall >= 0.85f && temperature > 0.3f) return HumidityCategory.HUMID;
+        if (downfall <= 0.15f) return HumidityCategory.DRY;
         return HumidityCategory.NEUTRAL;
     }
 }
