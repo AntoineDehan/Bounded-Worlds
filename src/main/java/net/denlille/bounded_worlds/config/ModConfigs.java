@@ -11,6 +11,7 @@ public class ModConfigs {
     public static final ForgeConfigSpec.IntValue WORLD_RADIUS;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_BIOMES;
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
+    public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
     public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HOT_DIRECTION;
@@ -46,6 +47,14 @@ public class ModConfigs {
                          "SMALL = 100-200 blocks, MEDIUM = 250-350 blocks (recommended), LARGE = 400-600 blocks.",
                          "Each zone gets a different random size within the chosen range.")
                 .defineEnum("forcedBiomeSize", BiomeZoneSize.MEDIUM);
+
+        TERRAIN_SHAPING = builder
+                .comment("Reshape terrain inside forced biome zones when it doesn't fit the biome:",
+                         "a land biome forced over ocean gets a real island, an ocean biome forced",
+                         "over land gets a water basin. Without this, such zones are only 'painted'",
+                         "(correct biome on the F3 screen, but visually just water or dry land).",
+                         "Disable if you suspect a terrain-generation conflict with another mod.")
+                .define("terrainShaping", true);
 
         REQUIRED_STRUCTURES = builder
                 .comment("List of structure IDs required within the world border.",

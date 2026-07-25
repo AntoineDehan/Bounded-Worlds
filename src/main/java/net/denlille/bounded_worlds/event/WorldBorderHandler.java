@@ -87,7 +87,9 @@ public class WorldBorderHandler {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not obtain overworld Climate.Sampler: {}", e.getMessage());
         }
         ForcedBiomeZoneManager.setOverworldContext(
-                overworld.getChunkSource().getGenerator().getBiomeSource(), overworldSampler);
+                overworld.getChunkSource().getGenerator().getBiomeSource(), overworldSampler,
+                overworld.getChunkSource().randomState());
+        ForcedBiomeZoneManager.setTerrainShapingEnabled(ModConfigs.TERRAIN_SHAPING.get());
 
         // Load zones persisted in a previous session — the scan below sees them
         // through the mixins, so their requirements count as satisfied and only

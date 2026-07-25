@@ -9,6 +9,29 @@ import net.minecraft.world.level.biome.Biome;
  */
 public final class ForcedBiomeZone {
 
+    /**
+     * How the terrain inside the zone is reshaped when it doesn't match the
+     * biome (a land biome placed over ocean, or an ocean biome over land).
+     * NONE = the terrain already fits, leave it alone.
+     */
+    public enum TerrainShaping {
+        NONE(0),
+        // Raise the floor to just above sea level — existing hills are kept
+        RAISE_ISLAND(67),
+        // Carve down to an ocean floor — existing deeper spots are kept
+        CARVE_BASIN(42);
+
+        private final int targetSurfaceY;
+
+        TerrainShaping(int targetSurfaceY) {
+            this.targetSurfaceY = targetSurfaceY;
+        }
+
+        public int targetSurfaceY() {
+            return targetSurfaceY;
+        }
+    }
+
     // Noise distorts the circular boundary by ±20% of the radius
     private static final double NOISE_AMPLITUDE = 0.2;
     // Climate morphing halo around the zone: bounds for the fade-out band width
@@ -25,6 +48,8 @@ public final class ForcedBiomeZone {
     // Climate values the halo morphs toward; null = hard-override-only zone
     @javax.annotation.Nullable
     private final ZoneClimateTarget climateTarget;
+    // How the terrain is reshaped when it doesn't fit the biome
+    private final TerrainShaping terrainShaping;
 
     // Pre-computed derived values for hot-path performance
     private final double radius;
@@ -37,17 +62,23 @@ public final class ForcedBiomeZone {
     private final int noiseOffsetZ;
 
     public ForcedBiomeZone(int centerX, int centerZ, int size, Holder<Biome> biome, String description) {
-        this(centerX, centerZ, size, biome, description, null);
+        this(centerX, centerZ, size, biome, description, null, TerrainShaping.NONE);
     }
 
     public ForcedBiomeZone(int centerX, int centerZ, int size, Holder<Biome> biome, String description,
                            @javax.annotation.Nullable ZoneClimateTarget climateTarget) {
+        this(centerX, centerZ, size, biome, description, climateTarget, TerrainShaping.NONE);
+    }
+
+    public ForcedBiomeZone(int centerX, int centerZ, int size, Holder<Biome> biome, String description,
+                           @javax.annotation.Nullable ZoneClimateTarget climateTarget, TerrainShaping terrainShaping) {
         this.centerX = centerX;
         this.centerZ = centerZ;
         this.size = size;
         this.biome = biome;
         this.description = description;
         this.climateTarget = climateTarget;
+        this.terrainShaping = terrainShaping;
 
         this.radius = size / 2.0;
         this.haloWidth = Math.min(MAX_HALO_WIDTH, Math.max(MIN_HALO_WIDTH, radius * HALO_FRACTION));
@@ -74,6 +105,7 @@ public final class ForcedBiomeZone {
     public String description() { return description; }
     @javax.annotation.Nullable
     public ZoneClimateTarget climateTarget() { return climateTarget; }
+    public TerrainShaping terrainShaping() { return terrainShaping; }
 
     /**
      * Largest possible extent of the zone including noise distortion and the
@@ -125,7 +157,14 @@ public final class ForcedBiomeZone {
      */
     public double morphFactor(int blockX, int blockZ) {
         if (climateTarget == null) return 0;
+        return edgeFactor(blockX, blockZ);
+    }
 
+    /**
+     * Pure edge geometry: 1 inside the zone, smoothstep fade to 0 across the
+     * halo. Shared by climate morphing and terrain shaping.
+     */
+    public double edgeFactor(int blockX, int blockZ) {
         double dx = blockX - centerX;
         double dz = blockZ - centerZ;
         double distSq = dx * dx + dz * dz;

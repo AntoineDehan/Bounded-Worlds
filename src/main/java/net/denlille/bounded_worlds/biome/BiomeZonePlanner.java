@@ -8,6 +8,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
@@ -149,14 +150,19 @@ public class BiomeZonePlanner {
                         "zone will use hard override without edge morphing.", biomeName);
             }
 
+            // 6. Terrain shaping when the terrain doesn't fit the biome
+            // (land biome over ocean → raise an island; ocean biome over land → carve a basin)
+            ForcedBiomeZone.TerrainShaping terrainShaping = decideTerrainShaping(chosenBiome, sampler, placement);
+
             String dirInfo = directional != null ? " [" + tempCategory + "/" + humidCategory + "]" : "";
             String desc = biomeName + " for " + req.description();
-            ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc, morphTarget);
+            ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize,
+                    chosenBiome, desc, morphTarget, terrainShaping);
             plannedZones.add(zone);
             allZones.add(zone);
 
-            BoundedWorlds.LOGGER.info("[Bounded Worlds] Planned forced zone: {} at ({}, {}), size {} ({}, {}){}",
-                    desc, placement.getX(), placement.getZ(), zoneSize, sizeCategory.name(), placementMode, dirInfo);
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] Planned forced zone: {} at ({}, {}), size {} ({}, {}, terrain={}){}",
+                    desc, placement.getX(), placement.getZ(), zoneSize, sizeCategory.name(), placementMode, terrainShaping, dirInfo);
         }
 
         return plannedZones;
@@ -178,6 +184,28 @@ public class BiomeZonePlanner {
 
         if (tagged.isEmpty()) return null;
         return tagged.get(random.nextInt(tagged.size()));
+    }
+
+    /**
+     * Decides whether the zone's terrain must be reshaped: a biome that isn't
+     * ocean/river-tagged needs dry land (mushroom_fields is "oceanic" by climate
+     * parameters but still needs an island), and an ocean/river biome needs a
+     * water basin. NONE when the terrain at the placement already fits.
+     */
+    private static ForcedBiomeZone.TerrainShaping decideTerrainShaping(
+            Holder<Biome> biome, @Nullable Climate.Sampler sampler, BlockPos placement) {
+        if (sampler == null) {
+            return ForcedBiomeZone.TerrainShaping.NONE;
+        }
+
+        boolean wantsWater = biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_DEEP_OCEAN)
+                || biome.is(BiomeTags.IS_RIVER);
+        boolean oceanicTerrain = ClimateMatcher.isOceanicSample(
+                sampler.sample(placement.getX() >> 2, 64 >> 2, placement.getZ() >> 2));
+
+        if (!wantsWater && oceanicTerrain) return ForcedBiomeZone.TerrainShaping.RAISE_ISLAND;
+        if (wantsWater && !oceanicTerrain) return ForcedBiomeZone.TerrainShaping.CARVE_BASIN;
+        return ForcedBiomeZone.TerrainShaping.NONE;
     }
 
     /** A placement position and how well its climate matches the target biome. */

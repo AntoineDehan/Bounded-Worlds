@@ -55,6 +55,10 @@ public final class ZonePersistence {
             z.addProperty("biome", biomeId);
             z.addProperty("description", zone.description());
 
+            if (zone.terrainShaping() != ForcedBiomeZone.TerrainShaping.NONE) {
+                z.addProperty("terrainShaping", zone.terrainShaping().name());
+            }
+
             ZoneClimateTarget target = zone.climateTarget();
             if (target != null) {
                 JsonObject t = new JsonObject();
@@ -104,6 +108,13 @@ public final class ZonePersistence {
                     continue;
                 }
 
+                ForcedBiomeZone.TerrainShaping terrainShaping = ForcedBiomeZone.TerrainShaping.NONE;
+                if (z.has("terrainShaping")) {
+                    try {
+                        terrainShaping = ForcedBiomeZone.TerrainShaping.valueOf(z.get("terrainShaping").getAsString());
+                    } catch (IllegalArgumentException ignored) {}
+                }
+
                 ZoneClimateTarget target = null;
                 if (z.has("climateTarget")) {
                     JsonObject t = z.getAsJsonObject("climateTarget");
@@ -121,7 +132,8 @@ public final class ZonePersistence {
                         z.get("size").getAsInt(),
                         biome,
                         z.get("description").getAsString(),
-                        target));
+                        target,
+                        terrainShaping));
             }
 
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Loaded {} persisted forced biome zone(s).", zones.size());

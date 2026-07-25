@@ -337,18 +337,24 @@ public class StructureScanner {
 
         // Create and register the forced biome zone, with a climate morph target
         // for smooth vanilla transitions at the edges (null = hard override only)
+        // and terrain raising when the spot is underwater (structure biomes are
+        // never oceanic — the candidates exclude ocean/river biomes above).
         ZoneClimateTarget morphTarget = null;
+        ForcedBiomeZone.TerrainShaping terrainShaping = ForcedBiomeZone.TerrainShaping.NONE;
         try {
+            Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
             morphTarget = ClimateMatcher.computeMorphTarget(
-                    chosenBiome, biomeSource,
-                    level.getChunkSource().randomState().sampler(),
-                    placement.getX(), placement.getZ());
+                    chosenBiome, biomeSource, sampler, placement.getX(), placement.getZ());
+            if (ClimateMatcher.isOceanicSample(sampler.sample(placement.getX() >> 2, 64 >> 2, placement.getZ() >> 2))) {
+                terrainShaping = ForcedBiomeZone.TerrainShaping.RAISE_ISLAND;
+            }
         } catch (Exception e) {
             BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Fallback: no climate morph target available: {}", e.getMessage());
         }
 
         String desc = biomeName + " (fallback for " + structureId + ")";
-        ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc, morphTarget);
+        ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize,
+                chosenBiome, desc, morphTarget, terrainShaping);
         ForcedBiomeZoneManager.addZone(zone);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: created forced biome zone {} at ({}, {}), size {}",
