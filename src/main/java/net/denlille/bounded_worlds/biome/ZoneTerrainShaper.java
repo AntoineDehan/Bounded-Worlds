@@ -27,6 +27,13 @@ public final class ZoneTerrainShaper implements DensityFunction {
     // Shaping fades to zero between these Y levels so deep caves survive
     private static final double FADE_BOTTOM_Y = 20.0;
     private static final double FADE_TOP_Y = 35.0;
+    // Gentle rolling hills on the reshaped surface instead of a flat plateau:
+    // deterministic value noise, ~55-block features, up to ±8 blocks of relief
+    // (dips below sea level become small coves on raised islands)
+    private static final double HILL_NOISE_SCALE_RADIUS = 220.0;
+    private static final double HILL_AMPLITUDE = 8.0;
+    private static final int HILL_NOISE_OFFSET_X = 7241;
+    private static final int HILL_NOISE_OFFSET_Z = -3937;
 
     private final DensityFunction wrapped;
     // Identity of the owning RandomState — gates shaping to the overworld
@@ -67,7 +74,11 @@ public final class ZoneTerrainShaper implements DensityFunction {
 
         double depthFade = smoothstep((blockY - FADE_BOTTOM_Y) / (FADE_TOP_Y - FADE_BOTTOM_Y));
 
-        double ramp = (shape.mode().targetSurfaceY() - blockY) * SLOPE_PER_BLOCK;
+        double hills = ForcedBiomeZone.sampleNoise(
+                blockX + HILL_NOISE_OFFSET_X, blockZ + HILL_NOISE_OFFSET_Z, HILL_NOISE_SCALE_RADIUS);
+        double targetY = shape.mode().targetSurfaceY() + hills * HILL_AMPLITUDE;
+
+        double ramp = (targetY - blockY) * SLOPE_PER_BLOCK;
         ramp = Math.max(-MAX_ABS_DENSITY, Math.min(MAX_ABS_DENSITY, ramp));
 
         double shaped = shape.mode() == ForcedBiomeZone.TerrainShaping.RAISE_ISLAND

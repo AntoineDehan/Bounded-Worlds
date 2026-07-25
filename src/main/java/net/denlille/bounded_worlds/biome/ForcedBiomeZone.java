@@ -187,8 +187,9 @@ public final class ForcedBiomeZone {
      * Simple 2D value noise with smooth interpolation (2 octaves).
      * Returns a value between -1 and 1.
      * The scale adapts to zone radius so larger zones have larger noise features.
+     * Also used by ZoneTerrainShaper to give reshaped terrain gentle hills.
      */
-    private static double sampleNoise(int x, int z, double radius) {
+    public static double sampleNoise(int x, int z, double radius) {
         // Noise feature size scales with zone radius
         double scale = Math.max(24.0, radius * 0.25);
         double nx = x / scale;
