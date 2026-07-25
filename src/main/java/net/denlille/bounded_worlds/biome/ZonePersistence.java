@@ -13,6 +13,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.biome.Biome;
 
+import javax.annotation.Nullable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -92,56 +93,70 @@ public final class ZonePersistence {
             return List.of();
         }
 
+        JsonObject root;
         try {
-            JsonObject root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
-            List<ForcedBiomeZone> zones = new ArrayList<>();
-
-            for (JsonElement element : root.getAsJsonArray("zones")) {
-                JsonObject z = element.getAsJsonObject();
-
-                ResourceLocation biomeId = ResourceLocation.tryParse(z.get("biome").getAsString());
-                Holder<Biome> biome = biomeId == null ? null
-                        : biomeRegistry.getHolder(ResourceKey.create(Registries.BIOME, biomeId)).orElse(null);
-                if (biome == null) {
-                    BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dropping persisted zone with unknown biome: {} — " +
-                            "already-generated chunks may not match the replacement zone.", z.get("biome").getAsString());
-                    continue;
-                }
-
-                ForcedBiomeZone.TerrainShaping terrainShaping = ForcedBiomeZone.TerrainShaping.NONE;
-                if (z.has("terrainShaping")) {
-                    try {
-                        terrainShaping = ForcedBiomeZone.TerrainShaping.valueOf(z.get("terrainShaping").getAsString());
-                    } catch (IllegalArgumentException ignored) {}
-                }
-
-                ZoneClimateTarget target = null;
-                if (z.has("climateTarget")) {
-                    JsonObject t = z.getAsJsonObject("climateTarget");
-                    target = new ZoneClimateTarget(
-                            t.get("temperature").getAsLong(),
-                            t.get("humidity").getAsLong(),
-                            t.get("continentalness").getAsLong(),
-                            t.get("erosion").getAsLong(),
-                            t.get("weirdness").getAsLong());
-                }
-
-                zones.add(new ForcedBiomeZone(
-                        z.get("centerX").getAsInt(),
-                        z.get("centerZ").getAsInt(),
-                        z.get("size").getAsInt(),
-                        biome,
-                        z.get("description").getAsString(),
-                        target,
-                        terrainShaping));
-            }
-
-            BoundedWorlds.LOGGER.info("[Bounded Worlds] Loaded {} persisted forced biome zone(s).", zones.size());
-            return zones;
+            root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
         } catch (Exception e) {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not read {} ({}) — zones will be re-planned.",
                     ZONES_FILE, e.getMessage());
             return List.of();
         }
+
+        List<ForcedBiomeZone> zones = new ArrayList<>();
+        // Each entry is parsed independently: one corrupt zone must not drop the
+        // others — replanning a zone whose chunks already exist misplaces it.
+        for (JsonElement element : root.getAsJsonArray("zones")) {
+            try {
+                ForcedBiomeZone zone = readZone(element.getAsJsonObject(), biomeRegistry);
+                if (zone != null) {
+                    zones.add(zone);
+                }
+            } catch (Exception e) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Skipping unreadable persisted zone entry ({}): {}",
+                        e.getMessage(), element);
+            }
+        }
+
+        BoundedWorlds.LOGGER.info("[Bounded Worlds] Loaded {} persisted forced biome zone(s).", zones.size());
+        return zones;
+    }
+
+    @Nullable
+    private static ForcedBiomeZone readZone(JsonObject z, Registry<Biome> biomeRegistry) {
+        ResourceLocation biomeId = ResourceLocation.tryParse(z.get("biome").getAsString());
+        Holder<Biome> biome = biomeId == null ? null
+                : biomeRegistry.getHolder(ResourceKey.create(Registries.BIOME, biomeId)).orElse(null);
+        if (biome == null) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dropping persisted zone with unknown biome: {} — " +
+                    "already-generated chunks may not match the replacement zone.", z.get("biome").getAsString());
+            return null;
+        }
+
+        ForcedBiomeZone.TerrainShaping terrainShaping = ForcedBiomeZone.TerrainShaping.NONE;
+        if (z.has("terrainShaping")) {
+            try {
+                terrainShaping = ForcedBiomeZone.TerrainShaping.valueOf(z.get("terrainShaping").getAsString());
+            } catch (IllegalArgumentException ignored) {}
+        }
+
+        ZoneClimateTarget target = null;
+        if (z.has("climateTarget")) {
+            JsonObject t = z.getAsJsonObject("climateTarget");
+            target = new ZoneClimateTarget(
+                    t.get("temperature").getAsLong(),
+                    t.get("humidity").getAsLong(),
+                    t.get("continentalness").getAsLong(),
+                    t.get("erosion").getAsLong(),
+                    t.get("weirdness").getAsLong());
+        }
+
+        return new ForcedBiomeZone(
+                z.get("centerX").getAsInt(),
+                z.get("centerZ").getAsInt(),
+                z.get("size").getAsInt(),
+                biome,
+                z.get("description").getAsString(),
+                target,
+                terrainShaping);
     }
 }
