@@ -27,6 +27,12 @@ public class ClimateSamplerMixin {
     @Inject(method = "sample", at = @At("RETURN"), cancellable = true)
     private void boundedWorlds$adjustClimate(int pX, int pY, int pZ,
                                               CallbackInfoReturnable<Climate.TargetPoint> cir) {
+        // The Nether has its own Climate.Sampler and TheEndBiomeSource reads
+        // erosion from its sampler — only ever touch the overworld's instance
+        if (!ForcedBiomeZoneManager.isOverworldSampler(this)) {
+            return;
+        }
+
         // Convert biome coordinates to block coordinates
         int blockX = pX << 2;
         int blockZ = pZ << 2;

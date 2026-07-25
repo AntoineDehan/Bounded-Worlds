@@ -4,8 +4,10 @@ import com.mojang.datafixers.util.Pair;
 import net.denlille.bounded_worlds.BoundedWorlds;
 import net.denlille.bounded_worlds.biome.BiomeScanner;
 import net.denlille.bounded_worlds.biome.BiomeZoneSize;
+import net.denlille.bounded_worlds.biome.ClimateMatcher;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZone;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
+import net.denlille.bounded_worlds.biome.ZoneClimateTarget;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
@@ -95,7 +97,7 @@ public class StructureScanner {
             // Fallback: if no existing biome worked, force a dedicated biome zone and retry
             if (generateResult == null) {
                 BoundedWorlds.LOGGER.info("[Bounded Worlds]   Primary placement failed for {} — trying fallback with forced biome zone...", idStr);
-                generateResult = fallbackWithForcedBiome(level, structure, spawnPos, radius, random, idStr, sizeCategory);
+                generateResult = fallbackWithForcedBiome(level, structure, spawnPos, radius, random, idStr, sizeCategory, biomeScanResult);
             }
 
             if (generateResult == null) {
@@ -245,14 +247,17 @@ public class StructureScanner {
 
     /**
      * Fallback: creates a forced biome zone for the structure and retries generation.
-     * Picks a valid biome from the structure's requirements, forces a zone at a random
-     * location within the radius, then tries Structure.generate() at the zone center.
+     * Prefers the (biome, position) pair whose climate best matches the existing
+     * terrain, like BiomeZonePlanner does; falls back to a seeded random choice
+     * when no climate data is available.
      */
     @Nullable
     private static GenerateResult fallbackWithForcedBiome(ServerLevel level, Structure structure,
                                                            BlockPos center, int radius, Random random,
-                                                           String structureId, BiomeZoneSize sizeCategory) {
+                                                           String structureId, BiomeZoneSize sizeCategory,
+                                                           BiomeScanner.ScanResult biomeScanResult) {
         HolderSet<Biome> validBiomes = structure.biomes();
+        BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
 
         // Pick a non-ocean/river biome from the structure's valid biomes
         List<Holder<Biome>> candidates = new ArrayList<>();
@@ -267,66 +272,75 @@ public class StructureScanner {
             return null;
         }
 
-        // Sort deterministically then pick randomly
         candidates.sort((a, b) -> {
             String nameA = a.unwrapKey().map(k -> k.location().toString()).orElse("");
             String nameB = b.unwrapKey().map(k -> k.location().toString()).orElse("");
             return nameA.compareTo(nameB);
         });
-        Holder<Biome> chosenBiome = candidates.get(random.nextInt(candidates.size()));
-        String biomeName = chosenBiome.unwrapKey().map(k -> k.location().toString()).orElse("unknown");
-
-        BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: chose biome {} for structure {}", biomeName, structureId);
 
         // Generate a zone size large enough for a structure
         int zoneSize = Math.max(sizeCategory.randomSize(random), 250);
 
-        // Find a valid position within the world radius for the new zone
         int centerX = center.getX();
         int centerZ = center.getZ();
         int borderPadding = 100;
         int effectiveRadius = radius - borderPadding;
         double zoneMaxRadius = ForcedBiomeZone.maxFootprint(zoneSize); // noise distortion + morphing halo
 
+        // Preferred path: the (biome, position) pair with the best climate match,
+        // so the zone's terrain fits the biome (same logic as the biome planner)
+        Holder<Biome> chosenBiome = null;
         BlockPos placement = null;
-        for (int attempt = 0; attempt < 50; attempt++) {
-            double angle = random.nextDouble() * 2 * Math.PI;
-            double dist = (effectiveRadius * 0.3) + (random.nextDouble() * effectiveRadius * 0.6);
-            int px = centerX + (int) (Math.cos(angle) * dist);
-            int pz = centerZ + (int) (Math.sin(angle) * dist);
+        long bestDist = Long.MAX_VALUE;
+        for (Holder<Biome> member : candidates) {
+            List<Climate.ParameterPoint> points = ClimateMatcher.getParameterPoints(member, biomeSource);
+            if (points.isEmpty()) continue;
+            ClimateMatcher.TerrainKind terrainKind = ClimateMatcher.targetTerrainKind(points);
 
-            // Verify zone fits within radius
-            double distFromCenter = Math.sqrt((long)(px - centerX) * (px - centerX) + (long)(pz - centerZ) * (pz - centerZ));
-            if (distFromCenter + zoneMaxRadius > effectiveRadius) continue;
+            for (BiomeScanner.ClimateSample sample : biomeScanResult.climateSamples()) {
+                if (!ClimateMatcher.matchesTerrainKind(sample.climate(), terrainKind)) continue;
+                if (!isValidZonePlacement(sample.x(), sample.z(), centerX, centerZ, effectiveRadius, zoneMaxRadius)) continue;
 
-            // Verify no overlap with existing forced zones
-            boolean overlaps = false;
-            for (ForcedBiomeZone existing : ForcedBiomeZoneManager.getZones()) {
-                double minDist = existing.maxFootprint() + zoneMaxRadius + 32;
-                double edx = px - existing.centerX();
-                double edz = pz - existing.centerZ();
-                if (Math.sqrt(edx * edx + edz * edz) < minDist) {
-                    overlaps = true;
+                long dist = ClimateMatcher.bestDistanceSq(sample.climate(), points);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    chosenBiome = member;
+                    placement = new BlockPos(sample.x(), 0, sample.z());
+                }
+            }
+        }
+
+        // Fallback path: seeded random biome + random position (no climate data)
+        if (chosenBiome == null) {
+            chosenBiome = candidates.get(random.nextInt(candidates.size()));
+            for (int attempt = 0; attempt < 50; attempt++) {
+                double angle = random.nextDouble() * 2 * Math.PI;
+                double dist = (effectiveRadius * 0.3) + (random.nextDouble() * effectiveRadius * 0.6);
+                int px = centerX + (int) (Math.cos(angle) * dist);
+                int pz = centerZ + (int) (Math.sin(angle) * dist);
+
+                if (isValidZonePlacement(px, pz, centerX, centerZ, effectiveRadius, zoneMaxRadius)) {
+                    placement = new BlockPos(px, 0, pz);
                     break;
                 }
             }
-            if (overlaps) continue;
-
-            placement = new BlockPos(px, 0, pz);
-            break;
         }
+
+        String biomeName = chosenBiome.unwrapKey().map(k -> k.location().toString()).orElse("unknown");
 
         if (placement == null) {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: could not find valid placement for biome zone.");
             return null;
         }
 
+        BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: chose biome {} for structure {}", biomeName, structureId);
+
         // Create and register the forced biome zone, with a climate morph target
         // for smooth vanilla transitions at the edges (null = hard override only)
-        net.denlille.bounded_worlds.biome.ZoneClimateTarget morphTarget = null;
+        ZoneClimateTarget morphTarget = null;
         try {
-            morphTarget = net.denlille.bounded_worlds.biome.ClimateMatcher.computeMorphTarget(
-                    chosenBiome, level.getChunkSource().getGenerator().getBiomeSource(),
+            morphTarget = ClimateMatcher.computeMorphTarget(
+                    chosenBiome, biomeSource,
                     level.getChunkSource().randomState().sampler(),
                     placement.getX(), placement.getZ());
         } catch (Exception e) {
@@ -375,6 +389,28 @@ public class StructureScanner {
 
         BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: Structure.generate() failed even in forced biome zone for {}", structureId);
         return null;
+    }
+
+    /**
+     * Zone placement validity for the structure fallback: fits within the
+     * effective radius and does not overlap any registered forced zone.
+     */
+    private static boolean isValidZonePlacement(int px, int pz, int centerX, int centerZ,
+                                                 int effectiveRadius, double zoneMaxRadius) {
+        double distFromCenter = Math.sqrt((long)(px - centerX) * (px - centerX) + (long)(pz - centerZ) * (pz - centerZ));
+        if (distFromCenter + zoneMaxRadius > effectiveRadius) {
+            return false;
+        }
+
+        for (ForcedBiomeZone existing : ForcedBiomeZoneManager.getZones()) {
+            double minDist = existing.maxFootprint() + zoneMaxRadius + 32;
+            double edx = px - existing.centerX();
+            double edz = pz - existing.centerZ();
+            if (Math.sqrt(edx * edx + edz * edz) < minDist) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean forcePlace(ServerLevel level, Structure structure, GenerateResult result, String structureId) {

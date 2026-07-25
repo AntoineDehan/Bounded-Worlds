@@ -18,10 +18,16 @@ public class BiomeSourceMixin {
     @Inject(method = "getNoiseBiome", at = @At("HEAD"), cancellable = true)
     private void boundedWorlds$onGetNoiseBiome(int x, int y, int z, Climate.Sampler sampler,
                                                 CallbackInfoReturnable<Holder<Biome>> cir) {
+        // The Nether also uses MultiNoiseBiomeSource — only touch the overworld
+        if (!ForcedBiomeZoneManager.isOverworldBiomeSource(this)) {
+            return;
+        }
+
         int blockX = x << 2;
+        int blockY = y << 2;
         int blockZ = z << 2;
 
-        Holder<Biome> forced = ForcedBiomeZoneManager.getBiomeAt(blockX, blockZ);
+        Holder<Biome> forced = ForcedBiomeZoneManager.getBiomeAt(blockX, blockY, blockZ);
         if (forced != null) {
             cir.setReturnValue(forced);
         }

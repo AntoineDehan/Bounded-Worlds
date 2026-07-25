@@ -9,14 +9,18 @@ import net.denlille.bounded_worlds.biome.DirectionalClimateManager;
 import net.denlille.bounded_worlds.biome.DirectionalPlacement;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZone;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
+import net.denlille.bounded_worlds.biome.ZonePersistence;
 import net.denlille.bounded_worlds.config.CompassDirection;
 import net.denlille.bounded_worlds.config.ModConfigs;
 import net.denlille.bounded_worlds.structure.StructureScanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -72,9 +76,28 @@ public class WorldBorderHandler {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Directional climate bias initialized.");
         }
 
-        // Phase 2: Biome guarantee (always runs — zones are in-memory only)
-        // Always clear zones on startup to avoid stale data from a previous session
+        // Phase 2: Biome guarantee
+        // Clear stale state, then capture the overworld's biome source and
+        // climate sampler so the mixins never affect other dimensions.
         ForcedBiomeZoneManager.clear();
+        Climate.Sampler overworldSampler = null;
+        try {
+            overworldSampler = overworld.getChunkSource().randomState().sampler();
+        } catch (Exception e) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not obtain overworld Climate.Sampler: {}", e.getMessage());
+        }
+        ForcedBiomeZoneManager.setOverworldContext(
+                overworld.getChunkSource().getGenerator().getBiomeSource(), overworldSampler);
+
+        // Load zones persisted in a previous session — the scan below sees them
+        // through the mixins, so their requirements count as satisfied and only
+        // genuinely new requirements get fresh zones planned.
+        Path zonesPath = worldDir.resolve(ZonePersistence.ZONES_FILE);
+        Registry<Biome> biomeRegistry = overworld.registryAccess().registryOrThrow(Registries.BIOME);
+        for (ForcedBiomeZone zone : ZonePersistence.load(zonesPath, biomeRegistry)) {
+            ForcedBiomeZoneManager.addZone(zone);
+        }
+
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(overworld, radius, directional);
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
@@ -84,11 +107,19 @@ public class WorldBorderHandler {
             // Write marker file
             try {
                 Files.createDirectories(markerPath.getParent());
-                Files.writeString(markerPath, "Bounded Worlds initialized. Delete this file to re-run border and structure setup.");
+                Files.writeString(markerPath, "Bounded Worlds initialized. Delete this file to re-run border and structure setup. " +
+                        "Delete " + ZonePersistence.ZONES_FILE + " as well to re-plan forced biome zones from scratch.");
                 BoundedWorlds.LOGGER.info("[Bounded Worlds] First-run setup complete. Marker file written.");
             } catch (IOException e) {
                 BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not write marker file: {}", e.getMessage());
             }
+        }
+
+        // Persist all zones (biome guarantee + structure fallbacks) so they
+        // survive restarts, config edits and placement-algorithm changes.
+        List<ForcedBiomeZone> allZones = ForcedBiomeZoneManager.getZones();
+        if (!allZones.isEmpty()) {
+            ZonePersistence.save(zonesPath, allZones);
         }
     }
 

@@ -47,6 +47,10 @@ public class BiomeZonePlanner {
         int centerZ = spawnPos.getZ();
 
         List<ForcedBiomeZone> plannedZones = new ArrayList<>();
+        // Spacing must also respect zones already registered (persisted from a
+        // previous session) — allZones is used for all placement constraints,
+        // plannedZones is what this call returns.
+        List<ForcedBiomeZone> allZones = new ArrayList<>(ForcedBiomeZoneManager.getZones());
 
         for (BiomeRequirement req : missing) {
             // 1. Generate a random size for this zone
@@ -61,7 +65,7 @@ public class BiomeZonePlanner {
 
             TagMatch tagMatch = req.isTag()
                     ? findBestTagMember(req, biomeRegistry, biomeSource, scanResult.climateSamples(),
-                            centerX, centerZ, worldRadius, zoneSize, plannedZones, directional)
+                            centerX, centerZ, worldRadius, zoneSize, allZones, directional)
                     : null;
             if (tagMatch != null) {
                 chosenBiome = tagMatch.biome();
@@ -92,7 +96,7 @@ public class BiomeZonePlanner {
                 if (!targetPoints.isEmpty() && !scanResult.climateSamples().isEmpty()) {
                     ClimateMatcher.TerrainKind terrainKind = ClimateMatcher.targetTerrainKind(targetPoints);
                     PlacementCandidate candidate = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
-                            centerX, centerZ, worldRadius, zoneSize, plannedZones,
+                            centerX, centerZ, worldRadius, zoneSize, allZones,
                             directional, tempCategory, humidCategory, terrainKind);
 
                     // Absolute backup: no compatible terrain at all in the radius
@@ -105,7 +109,7 @@ public class BiomeZonePlanner {
                                 terrainKind == ClimateMatcher.TerrainKind.LAND ? "underwater" : "on dry land");
                         placementMode = "climate-matched (terrain mismatch)";
                         candidate = findClimateMatchedLocation(targetPoints, scanResult.climateSamples(),
-                                centerX, centerZ, worldRadius, zoneSize, plannedZones,
+                                centerX, centerZ, worldRadius, zoneSize, allZones,
                                 directional, tempCategory, humidCategory, ClimateMatcher.TerrainKind.EITHER);
                     }
 
@@ -121,14 +125,14 @@ public class BiomeZonePlanner {
                         "falling back to approximate placement, terrain may look artificial.", biomeName);
                 placement = findCompatibleLocation(
                         tempCategory, humidCategory, scanResult.biomeLocations(),
-                        centerX, centerZ, worldRadius, zoneSize, plannedZones, random, directional);
+                        centerX, centerZ, worldRadius, zoneSize, allZones, random, directional);
             }
 
             if (placement == null) {
                 // Fallback: place at a random position in the correct region
                 int maxAttempts = directional != null ? 100 : 50;
                 placement = findFallbackLocation(centerX, centerZ, worldRadius, zoneSize,
-                        plannedZones, random, directional, tempCategory, humidCategory, maxAttempts);
+                        allZones, random, directional, tempCategory, humidCategory, maxAttempts);
             }
 
             if (placement == null) {
@@ -149,6 +153,7 @@ public class BiomeZonePlanner {
             String desc = biomeName + " for " + req.description();
             ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize, chosenBiome, desc, morphTarget);
             plannedZones.add(zone);
+            allZones.add(zone);
 
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Planned forced zone: {} at ({}, {}), size {} ({}, {}){}",
                     desc, placement.getX(), placement.getZ(), zoneSize, sizeCategory.name(), placementMode, dirInfo);
