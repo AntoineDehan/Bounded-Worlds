@@ -76,31 +76,54 @@ public class WorldBorderHandler {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Directional climate bias initialized.");
         }
 
-        // Phase 2: Biome guarantee
-        // Clear stale state, then capture the overworld's biome source and
-        // climate sampler so the mixins never affect other dimensions.
+        // Phase 2: Biome guarantee — per-dimension state. The mixins resolve
+        // their dimension by identity lookup, so nothing leaks into
+        // unregistered dimensions (the End, modded dims).
         ForcedBiomeZoneManager.clear();
-        Climate.Sampler overworldSampler = null;
-        try {
-            overworldSampler = overworld.getChunkSource().randomState().sampler();
-        } catch (Exception e) {
-            BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not obtain overworld Climate.Sampler: {}", e.getMessage());
-        }
-        ForcedBiomeZoneManager.setOverworldContext(
-                overworld.getChunkSource().getGenerator().getBiomeSource(), overworldSampler,
-                overworld.getChunkSource().randomState());
         ForcedBiomeZoneManager.setTerrainShapingEnabled(ModConfigs.TERRAIN_SHAPING.get());
+        ForcedBiomeZoneManager.DimensionEntry overworldEntry = ForcedBiomeZoneManager.register(overworld);
+        ServerLevel nether = event.getServer().getLevel(Level.NETHER);
+        ForcedBiomeZoneManager.DimensionEntry netherEntry = nether != null
+                ? ForcedBiomeZoneManager.register(nether) : null;
 
-        // Load zones persisted in a previous session — the scan below sees them
-        // through the mixins, so their requirements count as satisfied and only
-        // genuinely new requirements get fresh zones planned.
+        // Load zones persisted in a previous session and route them to their
+        // dimension — the scans below see them through the mixins, so their
+        // requirements count as satisfied and only genuinely new requirements
+        // get fresh zones planned.
         Path zonesPath = worldDir.resolve(ZonePersistence.ZONES_FILE);
         Registry<Biome> biomeRegistry = overworld.registryAccess().registryOrThrow(Registries.BIOME);
-        for (ForcedBiomeZone zone : ZonePersistence.load(zonesPath, biomeRegistry)) {
-            ForcedBiomeZoneManager.addZone(zone);
-        }
+        ZonePersistence.load(zonesPath, biomeRegistry).forEach((dimensionId, zones) -> {
+            ForcedBiomeZoneManager.DimensionEntry target = null;
+            for (ForcedBiomeZoneManager.DimensionEntry entry : ForcedBiomeZoneManager.entries()) {
+                if (entry.dimensionId().equals(dimensionId)) {
+                    target = entry;
+                    break;
+                }
+            }
+            if (target == null) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dropping {} persisted zone(s) for unknown dimension {}.",
+                        zones.size(), dimensionId);
+                return;
+            }
+            zones.forEach(target::addZone);
+        });
 
-        BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(overworld, radius, directional);
+        BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(
+                overworld, spawnPos, radius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
+
+        // Nether biome guarantee. No custom Nether border: vanilla shares one
+        // border across dimensions and the client always renders the overworld
+        // one (PlayerList.sendLevelInfo), so a different server-side Nether
+        // border would be an invisible, restart-fragile wall. The mirrored
+        // vanilla border already bounds the Nether at the same numeric radius,
+        // and portal placement is clamped to the border — no escape possible.
+        // Zones are planned within radius/8 of the scaled spawn so required
+        // biomes stay reachable in the area portals actually use.
+        if (netherEntry != null) {
+            int netherRadius = Math.min(radius, Math.max(200, radius / 8));
+            BlockPos netherCenter = new BlockPos(spawnPos.getX() / 8, 0, spawnPos.getZ() / 8);
+            handleBiomePhase(nether, netherCenter, netherRadius, null, netherEntry, ModConfigs.NETHER_REQUIRED_BIOMES.get());
+        }
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
         if (firstRun) {
@@ -119,9 +142,15 @@ public class WorldBorderHandler {
 
         // Persist all zones (biome guarantee + structure fallbacks) so they
         // survive restarts, config edits and placement-algorithm changes.
-        List<ForcedBiomeZone> allZones = ForcedBiomeZoneManager.getZones();
-        if (!allZones.isEmpty()) {
-            ZonePersistence.save(zonesPath, allZones);
+        boolean hasZones = false;
+        for (ForcedBiomeZoneManager.DimensionEntry entry : ForcedBiomeZoneManager.entries()) {
+            if (!entry.zones().isEmpty()) {
+                hasZones = true;
+                break;
+            }
+        }
+        if (hasZones) {
+            ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries());
         }
     }
 
@@ -151,8 +180,11 @@ public class WorldBorderHandler {
         return new DirectionalPlacement(hotDir, humidDir);
     }
 
-    private BiomeScanner.ScanResult handleBiomePhase(ServerLevel overworld, int radius, @javax.annotation.Nullable DirectionalPlacement directional) {
-        List<? extends String> biomeEntries = ModConfigs.REQUIRED_BIOMES.get();
+    private BiomeScanner.ScanResult handleBiomePhase(ServerLevel level, BlockPos center, int radius,
+                                                      @javax.annotation.Nullable DirectionalPlacement directional,
+                                                      ForcedBiomeZoneManager.DimensionEntry dimensionEntry,
+                                                      List<? extends String> biomeEntries) {
+        String dimensionName = level.dimension().location().toString();
 
         List<BiomeRequirement> requirements = new ArrayList<>();
         for (String entry : biomeEntries) {
@@ -162,14 +194,15 @@ public class WorldBorderHandler {
             }
         }
 
-        BoundedWorlds.LOGGER.info("[Bounded Worlds] Scanning biomes within {} block radius...", radius);
-        BiomeScanner.ScanResult result = BiomeScanner.scan(overworld, radius, requirements);
+        BoundedWorlds.LOGGER.info("[Bounded Worlds] Scanning {} biomes within {} block radius of ({}, {})...",
+                dimensionName, radius, center.getX(), center.getZ());
+        BiomeScanner.ScanResult result = BiomeScanner.scan(level, center, radius, requirements);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Biome scan complete in {}ms. Sampled {} points, found {} unique biomes.",
                 result.scanTimeMs(), result.sampledPoints(), result.foundBiomeIds().size());
 
         if (requirements.isEmpty()) {
-            BoundedWorlds.LOGGER.info("[Bounded Worlds] No required biomes configured.");
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] No required biomes configured for {}.", dimensionName);
             return result;
         }
 
@@ -183,21 +216,22 @@ public class WorldBorderHandler {
         }
 
         if (result.missing().isEmpty()) {
-            BoundedWorlds.LOGGER.info("[Bounded Worlds] All {} required biomes/tags are present!", requirements.size());
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] All {} required biomes/tags are present in {}!",
+                    requirements.size(), dimensionName);
             return result;
         }
 
-        BoundedWorlds.LOGGER.warn("[Bounded Worlds] {} of {} required biomes/tags are MISSING.",
-                result.missing().size(), requirements.size());
+        BoundedWorlds.LOGGER.warn("[Bounded Worlds] {} of {} required biomes/tags are MISSING in {}.",
+                result.missing().size(), requirements.size(), dimensionName);
 
         // Phase 2b: Force-place missing biomes
         BiomeZoneSize sizeCategory = ModConfigs.FORCED_BIOME_SIZE.get();
 
         List<ForcedBiomeZone> zones = BiomeZonePlanner.planZones(
-                overworld, result.missing(), result, radius, sizeCategory, directional);
+                level, center, result.missing(), result, radius, sizeCategory, directional, dimensionEntry.zones());
 
         for (ForcedBiomeZone zone : zones) {
-            ForcedBiomeZoneManager.addZone(zone);
+            dimensionEntry.addZone(zone);
         }
 
         if (!zones.isEmpty()) {

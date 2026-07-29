@@ -13,6 +13,7 @@ public class ModConfigs {
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NETHER_REQUIRED_BIOMES;
     public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HOT_DIRECTION;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HUMID_DIRECTION;
@@ -66,6 +67,26 @@ public class ModConfigs {
                         obj -> obj instanceof String s && !s.isBlank());
 
         builder.pop(); // world
+
+        builder.comment("Nether-specific requirements.",
+                         "Note: vanilla shares a single world border across dimensions (the client always",
+                         "renders the overworld one), so the Nether is bounded at the same numeric radius.",
+                         "Required Nether biomes are placed within worldRadius / 8 of the scaled spawn,",
+                         "so they stay reachable in the area portals actually use.");
+        builder.push("nether");
+
+        NETHER_REQUIRED_BIOMES = builder
+                .comment("List of biomes or biome tags required in the Nether, same syntax as world.requiredBiomes.",
+                         "Example: \"minecraft:crimson_forest\" or \"#minecraft:is_nether\"",
+                         "Only biomes that are part of the Nether's generation get matching terrain and",
+                         "surface blocks — an overworld biome here would be painted onto netherrack.",
+                         "Note: the placement area is small (worldRadius / 8) — prefer a short list and a",
+                         "small forcedBiomeSize if you require several biomes.")
+                .defineListAllowEmpty("requiredBiomes",
+                        List.of(),
+                        obj -> obj instanceof String s && !s.isBlank());
+
+        builder.pop(); // nether
 
         builder.comment("Terraria-style directional biome placement.",
                          "When enabled, biomes are placed based on temperature and humidity axes.",

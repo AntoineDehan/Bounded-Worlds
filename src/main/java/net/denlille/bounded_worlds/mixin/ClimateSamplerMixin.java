@@ -27,9 +27,10 @@ public class ClimateSamplerMixin {
     @Inject(method = "sample", at = @At("RETURN"), cancellable = true)
     private void boundedWorlds$adjustClimate(int pX, int pY, int pZ,
                                               CallbackInfoReturnable<Climate.TargetPoint> cir) {
-        // The Nether has its own Climate.Sampler and TheEndBiomeSource reads
-        // erosion from its sampler — only ever touch the overworld's instance
-        if (!ForcedBiomeZoneManager.isOverworldSampler(this)) {
+        // Identity lookup resolves the dimension; samplers of unregistered
+        // dimensions (the End reads erosion from its sampler!) are never touched
+        ForcedBiomeZoneManager.DimensionEntry entry = ForcedBiomeZoneManager.entryForSampler(this);
+        if (entry == null) {
             return;
         }
 
@@ -40,8 +41,8 @@ public class ClimateSamplerMixin {
         Climate.TargetPoint point = cir.getReturnValue();
         boolean changed = false;
 
-        // Stage 1: directional climate bias
-        if (DirectionalClimateManager.isEnabled()) {
+        // Stage 1: directional climate bias (overworld only)
+        if (entry.isOverworld() && DirectionalClimateManager.isEnabled()) {
             float tempBias = DirectionalClimateManager.getTemperatureBias(blockX, blockZ);
             float humidBias = DirectionalClimateManager.getHumidityBias(blockX, blockZ);
 
@@ -62,7 +63,7 @@ public class ClimateSamplerMixin {
         }
 
         // Stage 2: forced-zone climate morphing
-        ForcedBiomeZoneManager.ClimateMorph morph = ForcedBiomeZoneManager.getMorphAt(blockX, blockZ);
+        ForcedBiomeZoneManager.ClimateMorph morph = ForcedBiomeZoneManager.getMorphAt(entry, blockX, blockZ);
         if (morph != null) {
             ZoneClimateTarget target = morph.target();
             double factor = morph.factor();

@@ -65,11 +65,11 @@ public final class ZoneTerrainShaper implements DensityFunction {
         }
     }
 
-    private static double shape(double value, int blockX, int blockY, int blockZ) {
+    private double shape(double value, int blockX, int blockY, int blockZ) {
         // Deep underground: leave vanilla caves alone
         if (blockY <= FADE_BOTTOM_Y) return value;
 
-        ForcedBiomeZoneManager.TerrainShape shape = ForcedBiomeZoneManager.getTerrainShapeAt(blockX, blockZ);
+        ForcedBiomeZoneManager.TerrainShape shape = ForcedBiomeZoneManager.getTerrainShapeAt(owner, blockX, blockZ);
         if (shape == null) return value;
 
         double depthFade = smoothstep((blockY - FADE_BOTTOM_Y) / (FADE_TOP_Y - FADE_BOTTOM_Y));
