@@ -109,20 +109,20 @@ public class WorldBorderHandler {
         });
 
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(
-                overworld, radius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
+                overworld, spawnPos, radius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
 
-        // Nether biome guarantee — radius scaled by the portal ratio (1:8) so
-        // both bounded areas line up through portals. No directional layout.
+        // Nether biome guarantee. No custom Nether border: vanilla shares one
+        // border across dimensions and the client always renders the overworld
+        // one (PlayerList.sendLevelInfo), so a different server-side Nether
+        // border would be an invisible, restart-fragile wall. The mirrored
+        // vanilla border already bounds the Nether at the same numeric radius,
+        // and portal placement is clamped to the border — no escape possible.
+        // Zones are planned within radius/8 of the scaled spawn so required
+        // biomes stay reachable in the area portals actually use.
         if (netherEntry != null) {
-            int netherRadius = Math.max(200, radius / 8);
-            if (firstRun) {
-                WorldBorder netherBorder = nether.getWorldBorder();
-                netherBorder.setCenter(spawnPos.getX() / 8.0, spawnPos.getZ() / 8.0);
-                netherBorder.setSize(netherRadius * 2.0);
-                BoundedWorlds.LOGGER.info("[Bounded Worlds] Nether border set to {} blocks radius around ({}, {}).",
-                        netherRadius, spawnPos.getX() / 8, spawnPos.getZ() / 8);
-            }
-            handleBiomePhase(nether, netherRadius, null, netherEntry, ModConfigs.NETHER_REQUIRED_BIOMES.get());
+            int netherRadius = Math.min(radius, Math.max(200, radius / 8));
+            BlockPos netherCenter = new BlockPos(spawnPos.getX() / 8, 0, spawnPos.getZ() / 8);
+            handleBiomePhase(nether, netherCenter, netherRadius, null, netherEntry, ModConfigs.NETHER_REQUIRED_BIOMES.get());
         }
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
@@ -180,7 +180,7 @@ public class WorldBorderHandler {
         return new DirectionalPlacement(hotDir, humidDir);
     }
 
-    private BiomeScanner.ScanResult handleBiomePhase(ServerLevel level, int radius,
+    private BiomeScanner.ScanResult handleBiomePhase(ServerLevel level, BlockPos center, int radius,
                                                       @javax.annotation.Nullable DirectionalPlacement directional,
                                                       ForcedBiomeZoneManager.DimensionEntry dimensionEntry,
                                                       List<? extends String> biomeEntries) {
@@ -194,8 +194,9 @@ public class WorldBorderHandler {
             }
         }
 
-        BoundedWorlds.LOGGER.info("[Bounded Worlds] Scanning {} biomes within {} block radius...", dimensionName, radius);
-        BiomeScanner.ScanResult result = BiomeScanner.scan(level, radius, requirements);
+        BoundedWorlds.LOGGER.info("[Bounded Worlds] Scanning {} biomes within {} block radius of ({}, {})...",
+                dimensionName, radius, center.getX(), center.getZ());
+        BiomeScanner.ScanResult result = BiomeScanner.scan(level, center, radius, requirements);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Biome scan complete in {}ms. Sampled {} points, found {} unique biomes.",
                 result.scanTimeMs(), result.sampledPoints(), result.foundBiomeIds().size());
@@ -227,7 +228,7 @@ public class WorldBorderHandler {
         BiomeZoneSize sizeCategory = ModConfigs.FORCED_BIOME_SIZE.get();
 
         List<ForcedBiomeZone> zones = BiomeZonePlanner.planZones(
-                level, result.missing(), result, radius, sizeCategory, directional, dimensionEntry.zones());
+                level, center, result.missing(), result, radius, sizeCategory, directional, dimensionEntry.zones());
 
         for (ForcedBiomeZone zone : zones) {
             dimensionEntry.addZone(zone);

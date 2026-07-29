@@ -69,14 +69,18 @@ public class ModConfigs {
         builder.pop(); // world
 
         builder.comment("Nether-specific requirements.",
-                         "The Nether border radius is worldRadius / 8, matching portal coordinate scaling,",
-                         "so the bounded areas of both dimensions line up.");
+                         "Note: vanilla shares a single world border across dimensions (the client always",
+                         "renders the overworld one), so the Nether is bounded at the same numeric radius.",
+                         "Required Nether biomes are placed within worldRadius / 8 of the scaled spawn,",
+                         "so they stay reachable in the area portals actually use.");
         builder.push("nether");
 
         NETHER_REQUIRED_BIOMES = builder
                 .comment("List of biomes or biome tags required in the Nether, same syntax as world.requiredBiomes.",
                          "Example: \"minecraft:crimson_forest\" or \"#minecraft:is_nether\"",
-                         "Note: the Nether area is small (worldRadius / 8) — prefer a short list and a",
+                         "Only biomes that are part of the Nether's generation get matching terrain and",
+                         "surface blocks — an overworld biome here would be painted onto netherrack.",
+                         "Note: the placement area is small (worldRadius / 8) — prefer a short list and a",
                          "small forcedBiomeSize if you require several biomes.")
                 .defineListAllowEmpty("requiredBiomes",
                         List.of(),

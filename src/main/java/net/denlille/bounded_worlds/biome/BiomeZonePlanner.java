@@ -10,6 +10,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.TagKey;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
@@ -24,6 +25,7 @@ public class BiomeZonePlanner {
 
     public static List<ForcedBiomeZone> planZones(
             ServerLevel level,
+            BlockPos center,
             List<BiomeRequirement> missing,
             BiomeScanner.ScanResult scanResult,
             int worldRadius,
@@ -44,9 +46,9 @@ public class BiomeZonePlanner {
                     "climate morph targets will use the biome's first parameter point.");
         }
 
-        BlockPos spawnPos = level.getSharedSpawnPos();
-        int centerX = spawnPos.getX();
-        int centerZ = spawnPos.getZ();
+        int centerX = center.getX();
+        int centerZ = center.getZ();
+        boolean overworldLevel = level.dimension() == Level.OVERWORLD;
 
         List<ForcedBiomeZone> plannedZones = new ArrayList<>();
         // Spacing must also respect this dimension's already-registered zones
@@ -152,8 +154,12 @@ public class BiomeZonePlanner {
             }
 
             // 6. Terrain shaping when the terrain doesn't fit the biome
-            // (land biome over ocean → raise an island; ocean biome over land → carve a basin)
-            ForcedBiomeZone.TerrainShaping terrainShaping = decideTerrainShaping(chosenBiome, sampler, placement);
+            // (land biome over ocean → raise an island; ocean biome over land →
+            // carve a basin). Overworld only: raising islands or carving water
+            // basins makes no sense in the Nether's cave terrain.
+            ForcedBiomeZone.TerrainShaping terrainShaping = overworldLevel
+                    ? decideTerrainShaping(chosenBiome, sampler, placement)
+                    : ForcedBiomeZone.TerrainShaping.NONE;
 
             String dirInfo = directional != null ? " [" + tempCategory + "/" + humidCategory + "]" : "";
             String desc = biomeName + " for " + req.description();

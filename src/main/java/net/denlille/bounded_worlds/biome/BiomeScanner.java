@@ -27,13 +27,12 @@ public class BiomeScanner {
     private static final int CANDIDATE_STEP = 64;
     private static final int CANDIDATE_Y = 64;
 
-    public static ScanResult scan(ServerLevel level, int radius, List<BiomeRequirement> requirements) {
+    public static ScanResult scan(ServerLevel level, BlockPos center, int radius, List<BiomeRequirement> requirements) {
         long startTime = System.currentTimeMillis();
 
         BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
-        BlockPos spawnPos = level.getSharedSpawnPos();
-        int centerX = spawnPos.getX();
-        int centerZ = spawnPos.getZ();
+        int centerX = center.getX();
+        int centerZ = center.getZ();
 
         Set<Holder<Biome>> foundBiomes = new HashSet<>();
         Map<Holder<Biome>, BlockPos> biomeLocations = new HashMap<>();
