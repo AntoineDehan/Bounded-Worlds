@@ -287,6 +287,13 @@ public class StructureScanner {
         int effectiveRadius = radius - borderPadding;
         double zoneMaxRadius = ForcedBiomeZone.maxFootprint(zoneSize); // noise distortion + morphing halo
 
+        ForcedBiomeZoneManager.DimensionEntry dimensionEntry = ForcedBiomeZoneManager.entryFor(level);
+        if (dimensionEntry == null) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: no zone registry for dimension {}.",
+                    level.dimension().location());
+            return null;
+        }
+
         // Preferred path: the (biome, position) pair with the best climate match,
         // so the zone's terrain fits the biome (same logic as the biome planner)
         Holder<Biome> chosenBiome = null;
@@ -299,7 +306,7 @@ public class StructureScanner {
 
             for (BiomeScanner.ClimateSample sample : biomeScanResult.climateSamples()) {
                 if (!ClimateMatcher.matchesTerrainKind(sample.climate(), terrainKind)) continue;
-                if (!isValidZonePlacement(sample.x(), sample.z(), centerX, centerZ, effectiveRadius, zoneMaxRadius)) continue;
+                if (!isValidZonePlacement(sample.x(), sample.z(), centerX, centerZ, effectiveRadius, zoneMaxRadius, dimensionEntry)) continue;
 
                 long dist = ClimateMatcher.bestDistanceSq(sample.climate(), points);
                 if (dist < bestDist) {
@@ -319,7 +326,7 @@ public class StructureScanner {
                 int px = centerX + (int) (Math.cos(angle) * dist);
                 int pz = centerZ + (int) (Math.sin(angle) * dist);
 
-                if (isValidZonePlacement(px, pz, centerX, centerZ, effectiveRadius, zoneMaxRadius)) {
+                if (isValidZonePlacement(px, pz, centerX, centerZ, effectiveRadius, zoneMaxRadius, dimensionEntry)) {
                     placement = new BlockPos(px, 0, pz);
                     break;
                 }
@@ -355,7 +362,7 @@ public class StructureScanner {
         String desc = biomeName + " (fallback for " + structureId + ")";
         ForcedBiomeZone zone = new ForcedBiomeZone(placement.getX(), placement.getZ(), zoneSize,
                 chosenBiome, desc, morphTarget, terrainShaping);
-        ForcedBiomeZoneManager.addZone(zone);
+        dimensionEntry.addZone(zone);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: created forced biome zone {} at ({}, {}), size {}",
                 desc, placement.getX(), placement.getZ(), zoneSize);
@@ -402,13 +409,14 @@ public class StructureScanner {
      * effective radius and does not overlap any registered forced zone.
      */
     private static boolean isValidZonePlacement(int px, int pz, int centerX, int centerZ,
-                                                 int effectiveRadius, double zoneMaxRadius) {
+                                                 int effectiveRadius, double zoneMaxRadius,
+                                                 ForcedBiomeZoneManager.DimensionEntry dimensionEntry) {
         double distFromCenter = Math.sqrt((long)(px - centerX) * (px - centerX) + (long)(pz - centerZ) * (pz - centerZ));
         if (distFromCenter + zoneMaxRadius > effectiveRadius) {
             return false;
         }
 
-        for (ForcedBiomeZone existing : ForcedBiomeZoneManager.getZones()) {
+        for (ForcedBiomeZone existing : dimensionEntry.zones()) {
             double minDist = existing.maxFootprint() + zoneMaxRadius + 32;
             double edx = px - existing.centerX();
             double edz = pz - existing.centerZ();

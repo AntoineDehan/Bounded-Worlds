@@ -13,6 +13,7 @@ public class ModConfigs {
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NETHER_REQUIRED_BIOMES;
     public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HOT_DIRECTION;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HUMID_DIRECTION;
@@ -66,6 +67,22 @@ public class ModConfigs {
                         obj -> obj instanceof String s && !s.isBlank());
 
         builder.pop(); // world
+
+        builder.comment("Nether-specific requirements.",
+                         "The Nether border radius is worldRadius / 8, matching portal coordinate scaling,",
+                         "so the bounded areas of both dimensions line up.");
+        builder.push("nether");
+
+        NETHER_REQUIRED_BIOMES = builder
+                .comment("List of biomes or biome tags required in the Nether, same syntax as world.requiredBiomes.",
+                         "Example: \"minecraft:crimson_forest\" or \"#minecraft:is_nether\"",
+                         "Note: the Nether area is small (worldRadius / 8) — prefer a short list and a",
+                         "small forcedBiomeSize if you require several biomes.")
+                .defineListAllowEmpty("requiredBiomes",
+                        List.of(),
+                        obj -> obj instanceof String s && !s.isBlank());
+
+        builder.pop(); // nether
 
         builder.comment("Terraria-style directional biome placement.",
                          "When enabled, biomes are placed based on temperature and humidity axes.",

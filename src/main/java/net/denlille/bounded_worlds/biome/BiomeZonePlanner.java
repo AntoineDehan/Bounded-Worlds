@@ -28,7 +28,8 @@ public class BiomeZonePlanner {
             BiomeScanner.ScanResult scanResult,
             int worldRadius,
             BiomeZoneSize sizeCategory,
-            @Nullable DirectionalPlacement directional) {
+            @Nullable DirectionalPlacement directional,
+            List<ForcedBiomeZone> existingZones) {
 
         Registry<Biome> biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
         BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
@@ -48,10 +49,10 @@ public class BiomeZonePlanner {
         int centerZ = spawnPos.getZ();
 
         List<ForcedBiomeZone> plannedZones = new ArrayList<>();
-        // Spacing must also respect zones already registered (persisted from a
-        // previous session) — allZones is used for all placement constraints,
-        // plannedZones is what this call returns.
-        List<ForcedBiomeZone> allZones = new ArrayList<>(ForcedBiomeZoneManager.getZones());
+        // Spacing must also respect this dimension's already-registered zones
+        // (persisted from a previous session) — allZones is used for all
+        // placement constraints, plannedZones is what this call returns.
+        List<ForcedBiomeZone> allZones = new ArrayList<>(existingZones);
 
         for (BiomeRequirement req : missing) {
             // 1. Generate a random size for this zone
