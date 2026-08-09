@@ -12,6 +12,9 @@ public class ModConfigs {
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_BIOMES;
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
+    public static final ForgeConfigSpec.BooleanValue BORDER_BIOME_ENABLED;
+    public static final ForgeConfigSpec.ConfigValue<String> BORDER_BIOME;
+    public static final ForgeConfigSpec.IntValue BORDER_BIOME_WIDTH;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NETHER_REQUIRED_BIOMES;
     public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
@@ -56,6 +59,22 @@ public class ModConfigs {
                          "(correct biome on the F3 screen, but visually just water or dry land).",
                          "Disable if you suspect a terrain-generation conflict with another mod.")
                 .define("terrainShaping", true);
+
+        BORDER_BIOME_ENABLED = builder
+                .comment("Terraria-style border biome: a ring of a fixed biome hugging the world border,",
+                         "with an organic inner coastline. The ring's terrain is reshaped to fit the biome",
+                         "(a water biome carves a real sea, a land biome raises solid ground).",
+                         "Required biomes, structures and forced zones are kept inside the ring.",
+                         "Avoid changing these options after the border area has been explored — edits create seams.")
+                .define("borderBiomeEnabled", false);
+
+        BORDER_BIOME = builder
+                .comment("Biome ID for the border ring, e.g. \"minecraft:ocean\" or \"minecraft:desert\".")
+                .define("borderBiome", "minecraft:ocean");
+
+        BORDER_BIOME_WIDTH = builder
+                .comment("Width of the border ring in blocks, measured inward from the world border.")
+                .defineInRange("borderBiomeWidth", 256, 64, 2048);
 
         REQUIRED_STRUCTURES = builder
                 .comment("List of structure IDs required within the world border.",
