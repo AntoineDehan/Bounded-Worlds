@@ -21,7 +21,8 @@ public class ModConfigs {
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
-        builder.comment("Bounded Worlds Configuration");
+        builder.comment("Bounded Worlds Configuration",
+                        "Requirements for modded/datapack dimensions live in bounded_worlds-dimensions.json next to this file.");
         builder.push("world");
 
         WORLD_RADIUS = builder
