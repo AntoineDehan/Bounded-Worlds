@@ -132,7 +132,12 @@ public class WorldBorderHandler {
         // get fresh zones planned.
         Path zonesPath = worldDir.resolve(ZonePersistence.ZONES_FILE);
         Registry<Biome> biomeRegistry = overworld.registryAccess().registryOrThrow(Registries.BIOME);
-        ZonePersistence.load(zonesPath, biomeRegistry).forEach((dimensionId, zones) -> {
+        Map<ResourceLocation, List<ForcedBiomeZone>> orphanZones = new HashMap<>();
+        for (Map.Entry<ResourceLocation, List<ForcedBiomeZone>> persisted
+                : ZonePersistence.load(zonesPath, biomeRegistry).entrySet()) {
+            ResourceLocation dimensionId = persisted.getKey();
+            List<ForcedBiomeZone> zones = persisted.getValue();
+
             ForcedBiomeZoneManager.DimensionEntry target = null;
             for (ForcedBiomeZoneManager.DimensionEntry entry : ForcedBiomeZoneManager.entries()) {
                 if (entry.dimensionId().equals(dimensionId)) {
@@ -140,13 +145,29 @@ public class WorldBorderHandler {
                     break;
                 }
             }
+
+            // Zones for a dimension without active requirements: if the level
+            // still exists, register it on demand so the zones keep applying
+            // (chunks were already generated with them).
             if (target == null) {
-                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dropping {} persisted zone(s) for unknown dimension {}.",
-                        zones.size(), dimensionId);
-                return;
+                ServerLevel dimLevel = event.getServer().getLevel(ResourceKey.create(Registries.DIMENSION, dimensionId));
+                if (dimLevel != null) {
+                    target = ForcedBiomeZoneManager.register(dimLevel);
+                    BoundedWorlds.LOGGER.info("[Bounded Worlds] Registered {} for {} persisted zone(s) " +
+                            "(no active requirements for this dimension).", dimensionId, zones.size());
+                }
             }
-            zones.forEach(target::addZone);
-        });
+
+            if (target != null) {
+                zones.forEach(target::addZone);
+            } else {
+                // Dimension absent (mod removed?) — keep the zones in the file
+                // so they line up again if it comes back.
+                orphanZones.put(dimensionId, zones);
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dimension {} not present — keeping its {} persisted zone(s) " +
+                        "on file for when it returns.", dimensionId, zones.size());
+            }
+        }
 
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(
                 overworld, spawnPos, radius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
@@ -188,7 +209,7 @@ public class WorldBorderHandler {
 
         // Persist all zones (biome guarantee + structure fallbacks) so they
         // survive restarts, config edits and placement-algorithm changes.
-        boolean hasZones = false;
+        boolean hasZones = !orphanZones.isEmpty();
         for (ForcedBiomeZoneManager.DimensionEntry entry : ForcedBiomeZoneManager.entries()) {
             if (!entry.zones().isEmpty()) {
                 hasZones = true;
@@ -196,7 +217,7 @@ public class WorldBorderHandler {
             }
         }
         if (hasZones) {
-            ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries());
+            ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries(), orphanZones);
         }
     }
 

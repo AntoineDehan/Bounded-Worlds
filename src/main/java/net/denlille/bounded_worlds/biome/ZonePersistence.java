@@ -37,47 +37,21 @@ public final class ZonePersistence {
 
     private ZonePersistence() {}
 
-    public static void save(Path path, List<ForcedBiomeZoneManager.DimensionEntry> entries) {
+    public static void save(Path path, List<ForcedBiomeZoneManager.DimensionEntry> entries,
+                            Map<ResourceLocation, List<ForcedBiomeZone>> orphanZones) {
         JsonObject root = new JsonObject();
         root.addProperty("version", FORMAT_VERSION);
 
         JsonArray zoneArray = new JsonArray();
         for (ForcedBiomeZoneManager.DimensionEntry entry : entries) {
             for (ForcedBiomeZone zone : entry.zones()) {
-                String biomeId = zone.biome().unwrapKey()
-                        .map(ResourceKey::location)
-                        .map(ResourceLocation::toString)
-                        .orElse(null);
-                if (biomeId == null) {
-                    BoundedWorlds.LOGGER.warn("[Bounded Worlds] Cannot persist zone with unregistered biome: {}", zone);
-                    continue;
-                }
-
-                JsonObject z = new JsonObject();
-                z.addProperty("dimension", entry.dimensionId().toString());
-                z.addProperty("centerX", zone.centerX());
-                z.addProperty("centerZ", zone.centerZ());
-                z.addProperty("size", zone.size());
-                z.addProperty("biome", biomeId);
-                z.addProperty("description", zone.description());
-
-                if (zone.terrainShaping() != ForcedBiomeZone.TerrainShaping.NONE) {
-                    z.addProperty("terrainShaping", zone.terrainShaping().name());
-                }
-
-                ZoneClimateTarget target = zone.climateTarget();
-                if (target != null) {
-                    JsonObject t = new JsonObject();
-                    t.addProperty("temperature", target.temperature());
-                    t.addProperty("humidity", target.humidity());
-                    t.addProperty("continentalness", target.continentalness());
-                    t.addProperty("erosion", target.erosion());
-                    t.addProperty("weirdness", target.weirdness());
-                    z.add("climateTarget", t);
-                }
-                zoneArray.add(z);
+                addZoneJson(zoneArray, entry.dimensionId(), zone);
             }
         }
+        // Zones whose dimension is currently absent (mod removed?) are carried
+        // through unchanged so they line up again when the dimension returns.
+        orphanZones.forEach((dimensionId, zones) ->
+                zones.forEach(zone -> addZoneJson(zoneArray, dimensionId, zone)));
         root.add("zones", zoneArray);
 
         try {
@@ -86,6 +60,41 @@ public final class ZonePersistence {
         } catch (Exception e) {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not persist forced biome zones: {}", e.getMessage());
         }
+    }
+
+    private static void addZoneJson(JsonArray zoneArray, ResourceLocation dimensionId, ForcedBiomeZone zone) {
+        String biomeId = zone.biome().unwrapKey()
+                .map(ResourceKey::location)
+                .map(ResourceLocation::toString)
+                .orElse(null);
+        if (biomeId == null) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] Cannot persist zone with unregistered biome: {}", zone);
+            return;
+        }
+
+        JsonObject z = new JsonObject();
+        z.addProperty("dimension", dimensionId.toString());
+        z.addProperty("centerX", zone.centerX());
+        z.addProperty("centerZ", zone.centerZ());
+        z.addProperty("size", zone.size());
+        z.addProperty("biome", biomeId);
+        z.addProperty("description", zone.description());
+
+        if (zone.terrainShaping() != ForcedBiomeZone.TerrainShaping.NONE) {
+            z.addProperty("terrainShaping", zone.terrainShaping().name());
+        }
+
+        ZoneClimateTarget target = zone.climateTarget();
+        if (target != null) {
+            JsonObject t = new JsonObject();
+            t.addProperty("temperature", target.temperature());
+            t.addProperty("humidity", target.humidity());
+            t.addProperty("continentalness", target.continentalness());
+            t.addProperty("erosion", target.erosion());
+            t.addProperty("weirdness", target.weirdness());
+            z.add("climateTarget", t);
+        }
+        zoneArray.add(z);
     }
 
     /**
