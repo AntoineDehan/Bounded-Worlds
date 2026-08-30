@@ -185,6 +185,11 @@ public class WorldBorderHandler {
             return radius;
         }
 
+        if (!ModConfigs.TERRAIN_SHAPING.get()) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] borderBiomeEnabled works best with terrainShaping enabled — " +
+                    "without it the ring biome is only painted onto the existing terrain.");
+        }
+
         int width = ModConfigs.BORDER_BIOME_WIDTH.get();
         int usableRadius = Math.max(200, radius - width);
 
