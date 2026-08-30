@@ -18,7 +18,8 @@ import javax.annotation.Nullable;
  */
 public final class BorderBiomeRing {
 
-    // Climate morphing halo, extending inward from the noised inner edge
+    // Climate morphing halo, extending OUTWARD into the ring so nothing
+    // oceanic appears before the promised inner line (worldRadius - width)
     private static final double HALO_WIDTH = 48.0;
     // Coastline distortion: ±32 blocks with ~100-block features
     private static final double NOISE_AMPLITUDE = 32.0;
@@ -48,9 +49,9 @@ public final class BorderBiomeRing {
         this.climateTarget = climateTarget;
         this.terrainShaping = terrainShaping;
 
-        double outside = innerRadius + NOISE_AMPLITUDE;
+        double outside = innerRadius + NOISE_AMPLITUDE + HALO_WIDTH;
         this.definitelyOutsideSq = outside * outside;
-        double inside = Math.max(0, innerRadius - NOISE_AMPLITUDE - HALO_WIDTH);
+        double inside = Math.max(0, innerRadius - NOISE_AMPLITUDE);
         this.definitelyInsideSq = inside * inside;
 
         this.noiseOffsetX = centerX * 11 + centerZ * 5;
@@ -75,7 +76,10 @@ public final class BorderBiomeRing {
     public ForcedBiomeZone.TerrainShaping terrainShaping() { return terrainShaping; }
     public double innerRadius() { return innerRadius; }
 
-    /** Whether a block position lies in the ring (beyond the noised inner edge). */
+    /**
+     * Whether a block position is fully in the ring (past the noised coastline
+     * plus the transition halo — the hard-override region).
+     */
     public boolean contains(int blockX, int blockZ) {
         double dx = blockX - centerX;
         double dz = blockZ - centerZ;
@@ -84,12 +88,12 @@ public final class BorderBiomeRing {
         if (distSq >= definitelyOutsideSq) return true;
         if (distSq <= definitelyInsideSq) return false;
 
-        return Math.sqrt(distSq) >= effectiveInnerRadius(blockX, blockZ);
+        return Math.sqrt(distSq) >= effectiveInnerRadius(blockX, blockZ) + HALO_WIDTH;
     }
 
     /**
-     * Blend strength: 1 in the ring, fading smoothly to 0 across the halo
-     * band inward of the noised coastline. Mirrors ForcedBiomeZone.edgeFactor.
+     * Blend strength: 0 inside the noised coastline (nothing oceanic before the
+     * promised line), ramping to 1 across the halo band inside the ring.
      */
     public double edgeFactor(int blockX, int blockZ) {
         double dx = blockX - centerX;
@@ -102,9 +106,9 @@ public final class BorderBiomeRing {
         double distance = Math.sqrt(distSq);
         double effectiveInner = effectiveInnerRadius(blockX, blockZ);
 
-        if (distance >= effectiveInner) return 1;
-        double t = 1.0 - (effectiveInner - distance) / HALO_WIDTH;
-        if (t <= 0) return 0;
+        if (distance <= effectiveInner) return 0;
+        double t = (distance - effectiveInner) / HALO_WIDTH;
+        if (t >= 1) return 1;
         return t * t * (3 - 2 * t); // smoothstep
     }
 
