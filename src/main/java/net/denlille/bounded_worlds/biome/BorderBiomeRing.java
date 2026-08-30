@@ -19,10 +19,13 @@ import javax.annotation.Nullable;
 public final class BorderBiomeRing {
 
     // Climate morphing halo, extending OUTWARD into the ring so nothing
-    // oceanic appears before the promised inner line (worldRadius - width)
-    private static final double HALO_WIDTH = 48.0;
-    // Coastline distortion: ±32 blocks with ~100-block features
-    private static final double NOISE_AMPLITUDE = 32.0;
+    // oceanic appears before the promised inner line (worldRadius - width).
+    // Halo and coastline noise scale down with narrow rings so the fully
+    // established biome always occupies most of the ring width.
+    private static final double MAX_HALO_WIDTH = 48.0;
+    private static final double HALO_FRACTION = 0.35;
+    private static final double MAX_NOISE_AMPLITUDE = 32.0;
+    private static final double NOISE_FRACTION = 0.25;
     private static final double NOISE_SCALE_RADIUS = 400.0;
 
     private final int centerX;
@@ -33,13 +36,15 @@ public final class BorderBiomeRing {
     private final ZoneClimateTarget climateTarget;
     private final ForcedBiomeZone.TerrainShaping terrainShaping;
 
+    private final double haloWidth;
+    private final double noiseAmplitude;
     // Pre-computed squared bounds for fast reject/accept without sqrt
     private final double definitelyOutsideSq;
     private final double definitelyInsideSq;
     private final int noiseOffsetX;
     private final int noiseOffsetZ;
 
-    public BorderBiomeRing(int centerX, int centerZ, double innerRadius, Holder<Biome> biome,
+    public BorderBiomeRing(int centerX, int centerZ, double innerRadius, int ringWidth, Holder<Biome> biome,
                            @Nullable ZoneClimateTarget climateTarget,
                            ForcedBiomeZone.TerrainShaping terrainShaping) {
         this.centerX = centerX;
@@ -49,9 +54,12 @@ public final class BorderBiomeRing {
         this.climateTarget = climateTarget;
         this.terrainShaping = terrainShaping;
 
-        double outside = innerRadius + NOISE_AMPLITUDE + HALO_WIDTH;
+        this.haloWidth = Math.min(MAX_HALO_WIDTH, ringWidth * HALO_FRACTION);
+        this.noiseAmplitude = Math.min(MAX_NOISE_AMPLITUDE, ringWidth * NOISE_FRACTION);
+
+        double outside = innerRadius + noiseAmplitude + haloWidth;
         this.definitelyOutsideSq = outside * outside;
-        double inside = Math.max(0, innerRadius - NOISE_AMPLITUDE);
+        double inside = Math.max(0, innerRadius - noiseAmplitude);
         this.definitelyInsideSq = inside * inside;
 
         this.noiseOffsetX = centerX * 11 + centerZ * 5;
@@ -88,7 +96,7 @@ public final class BorderBiomeRing {
         if (distSq >= definitelyOutsideSq) return true;
         if (distSq <= definitelyInsideSq) return false;
 
-        return Math.sqrt(distSq) >= effectiveInnerRadius(blockX, blockZ) + HALO_WIDTH;
+        return Math.sqrt(distSq) >= effectiveInnerRadius(blockX, blockZ) + haloWidth;
     }
 
     /**
@@ -107,7 +115,7 @@ public final class BorderBiomeRing {
         double effectiveInner = effectiveInnerRadius(blockX, blockZ);
 
         if (distance <= effectiveInner) return 0;
-        double t = (distance - effectiveInner) / HALO_WIDTH;
+        double t = (distance - effectiveInner) / haloWidth;
         if (t >= 1) return 1;
         return t * t * (3 - 2 * t); // smoothstep
     }
@@ -115,7 +123,7 @@ public final class BorderBiomeRing {
     private double effectiveInnerRadius(int blockX, int blockZ) {
         double noise = ForcedBiomeZone.sampleNoise(
                 blockX + noiseOffsetX, blockZ + noiseOffsetZ, NOISE_SCALE_RADIUS);
-        return innerRadius + noise * NOISE_AMPLITUDE;
+        return innerRadius + noise * noiseAmplitude;
     }
 
     @Override

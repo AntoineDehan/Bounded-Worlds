@@ -205,7 +205,7 @@ public class WorldBorderHandler {
 
         ForcedBiomeZone.TerrainShaping shaping = BorderBiomeRing.shapingFor(biome);
         BorderBiomeRing ring = new BorderBiomeRing(spawnPos.getX(), spawnPos.getZ(), usableRadius,
-                biome, morphTarget, shaping);
+                radius - usableRadius, biome, morphTarget, shaping);
         entry.setBorderRing(ring);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Border biome ring enabled: {} beyond radius {} (width {}, terrain={}).",
