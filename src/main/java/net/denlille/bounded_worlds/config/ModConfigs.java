@@ -12,6 +12,9 @@ public class ModConfigs {
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_BIOMES;
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
+    public static final ForgeConfigSpec.BooleanValue BORDER_BIOME_ENABLED;
+    public static final ForgeConfigSpec.ConfigValue<String> BORDER_BIOME;
+    public static final ForgeConfigSpec.IntValue BORDER_BIOME_WIDTH;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NETHER_REQUIRED_BIOMES;
     public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
@@ -25,91 +28,74 @@ public class ModConfigs {
         builder.push("world");
 
         WORLD_RADIUS = builder
-                .comment("World radius in blocks from spawn point.",
-                         "The world border will be set to this radius around the spawn.",
-                         "Only applied on first world creation. Delete 'bounded_worlds_initialized.dat' in the world folder to re-apply.",
-                         "Note: a larger radius means a longer first-launch setup (the biome scan grows with the square of the radius).",
-                         "Note: a very small radius may not contain terrain that fits every required biome —",
-                         "forced zones then fall back to approximate placement and can look out of place (e.g. underwater).")
+                .comment("World radius in blocks around spawn; sets the world border on first world creation.",
+                         "Delete 'bounded_worlds_initialized.dat' in the world folder to re-apply.")
                 .defineInRange("worldRadius", 3000, 100, 20000);
 
         REQUIRED_BIOMES = builder
-                .comment("List of biomes or biome tags required within the world border.",
-                         "Use biome IDs: \"minecraft:mushroom_fields\"",
-                         "Use tags with # prefix: \"#minecraft:is_jungle\" or \"#forge:is_hot\"",
-                         "On server start, the mod scans and reports which are present or missing.")
+                .comment("Biomes or #tags that must exist within the border, e.g. \"minecraft:mushroom_fields\", \"#forge:is_hot\".",
+                         "Missing ones are generated as natural-looking zones.")
                 .defineListAllowEmpty("requiredBiomes",
                         List.of(),
                         obj -> obj instanceof String s && !s.isBlank());
 
         FORCED_BIOME_SIZE = builder
-                .comment("Size category of forced biome zones.",
-                         "When a required biome is missing, a zone with a random size in this range is created.",
-                         "SMALL = 100-200 blocks, MEDIUM = 250-350 blocks (recommended), LARGE = 400-600 blocks.",
-                         "Each zone gets a different random size within the chosen range.")
+                .comment("Size of forced biome zones: SMALL 100-200, MEDIUM 250-350, LARGE 400-600 blocks.")
                 .defineEnum("forcedBiomeSize", BiomeZoneSize.MEDIUM);
 
         TERRAIN_SHAPING = builder
-                .comment("Reshape terrain inside forced biome zones when it doesn't fit the biome:",
-                         "a land biome forced over ocean gets a real island, an ocean biome forced",
-                         "over land gets a water basin. Without this, such zones are only 'painted'",
-                         "(correct biome on the F3 screen, but visually just water or dry land).",
-                         "Disable if you suspect a terrain-generation conflict with another mod.")
+                .comment("Reshape terrain when it doesn't fit a forced biome (raise islands, carve sea basins).",
+                         "Disable if another mod conflicts with terrain generation.")
                 .define("terrainShaping", true);
 
+        BORDER_BIOME_ENABLED = builder
+                .comment("Terraria-style ring of a fixed biome hugging the world border, terrain reshaped to fit.",
+                         "Don't change these options after exploring the border area — edits create seams.")
+                .define("borderBiomeEnabled", false);
+
+        BORDER_BIOME = builder
+                .comment("Biome of the border ring.")
+                .define("borderBiome", "minecraft:ocean");
+
+        BORDER_BIOME_WIDTH = builder
+                .comment("Ring width in blocks, measured inward from the world border.")
+                .defineInRange("borderBiomeWidth", 256, 64, 2048);
+
         REQUIRED_STRUCTURES = builder
-                .comment("List of structure IDs required within the world border.",
-                         "Example: \"minecraft:stronghold\", \"minecraft:monument\"",
-                         "If a structure is not found within the radius, it will be force-placed in a valid biome.",
-                         "Only checked on first world creation. Delete 'bounded_worlds_initialized.dat' to re-run.")
+                .comment("Structure IDs that must exist within the border, e.g. \"minecraft:monument\".",
+                         "Missing ones are force-placed. Checked on first world creation only.")
                 .defineListAllowEmpty("requiredStructures",
                         List.of(),
                         obj -> obj instanceof String s && !s.isBlank());
 
         builder.pop(); // world
 
-        builder.comment("Nether-specific requirements.",
-                         "Note: vanilla shares a single world border across dimensions (the client always",
-                         "renders the overworld one), so the Nether is bounded at the same numeric radius.",
-                         "Required Nether biomes are placed within worldRadius / 8 of the scaled spawn,",
-                         "so they stay reachable in the area portals actually use.");
+        builder.comment("Nether requirements. Zones are placed within worldRadius / 8 of the scaled spawn",
+                        "(the Nether shares the overworld's border).");
         builder.push("nether");
 
         NETHER_REQUIRED_BIOMES = builder
-                .comment("List of biomes or biome tags required in the Nether, same syntax as world.requiredBiomes.",
-                         "Example: \"minecraft:crimson_forest\" or \"#minecraft:is_nether\"",
-                         "Only biomes that are part of the Nether's generation get matching terrain and",
-                         "surface blocks — an overworld biome here would be painted onto netherrack.",
-                         "Note: the placement area is small (worldRadius / 8) — prefer a short list and a",
-                         "small forcedBiomeSize if you require several biomes.")
+                .comment("Biomes or #tags required in the Nether, e.g. \"minecraft:crimson_forest\".",
+                         "Nether biomes only; prefer a SMALL forcedBiomeSize when listing several.")
                 .defineListAllowEmpty("requiredBiomes",
                         List.of(),
                         obj -> obj instanceof String s && !s.isBlank());
 
         builder.pop(); // nether
 
-        builder.comment("Terraria-style directional biome placement.",
-                         "When enabled, biomes are placed based on temperature and humidity axes.",
-                         "Hot biomes go in one direction, cold in the opposite.",
-                         "Humid biomes go in a perpendicular direction, dry in the opposite.");
+        builder.comment("Terraria-style directional layout: hot/cold and humid/dry biome axes around spawn.");
         builder.push("directional");
 
         DIRECTIONAL_ENABLED = builder
-                .comment("Enable directional biome placement.",
-                         "When enabled, forced biome zones are placed in the correct quadrant",
-                         "based on their temperature (hot/cold) and humidity (humid/dry).")
+                .comment("Place forced biome zones in quadrants matching their temperature and humidity.")
                 .define("enabled", false);
 
         HOT_DIRECTION = builder
-                .comment("Compass direction for hot biomes. Cold biomes go in the opposite direction.",
-                         "NORTH, SOUTH, EAST, WEST, or RANDOM (chosen from world seed).",
-                         "Must be perpendicular to humidDirection (unless RANDOM).")
+                .comment("Direction for hot biomes (cold = opposite). Perpendicular to humidDirection. RANDOM = seed-based.")
                 .defineEnum("hotDirection", CompassDirection.SOUTH);
 
         HUMID_DIRECTION = builder
-                .comment("Compass direction for humid biomes. Dry biomes go in the opposite direction.",
-                         "NORTH, SOUTH, EAST, WEST, or RANDOM (chosen from world seed).",
-                         "Must be perpendicular to hotDirection (unless RANDOM).")
+                .comment("Direction for humid biomes (dry = opposite). Perpendicular to hotDirection. RANDOM = seed-based.")
                 .defineEnum("humidDirection", CompassDirection.EAST);
 
         builder.pop(); // directional

@@ -5,10 +5,13 @@ import net.denlille.bounded_worlds.biome.BiomeRequirement;
 import net.denlille.bounded_worlds.biome.BiomeScanner;
 import net.denlille.bounded_worlds.biome.BiomeZonePlanner;
 import net.denlille.bounded_worlds.biome.BiomeZoneSize;
+import net.denlille.bounded_worlds.biome.BorderBiomeRing;
+import net.denlille.bounded_worlds.biome.ClimateMatcher;
 import net.denlille.bounded_worlds.biome.DirectionalClimateManager;
 import net.denlille.bounded_worlds.biome.DirectionalPlacement;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZone;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
+import net.denlille.bounded_worlds.biome.ZoneClimateTarget;
 import net.denlille.bounded_worlds.biome.ZonePersistence;
 import net.denlille.bounded_worlds.config.CompassDirection;
 import net.denlille.bounded_worlds.config.ModConfigs;
@@ -17,6 +20,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
@@ -86,6 +91,14 @@ public class WorldBorderHandler {
         ForcedBiomeZoneManager.DimensionEntry netherEntry = nether != null
                 ? ForcedBiomeZoneManager.register(nether) : null;
 
+        // Optional Terraria-style border biome ring (overworld only). Everything
+        // else (required biomes, structures, forced zones) is planned within the
+        // usable radius so nothing lands inside the ring and gets painted over.
+        int usableRadius = radius;
+        if (ModConfigs.BORDER_BIOME_ENABLED.get()) {
+            usableRadius = setupBorderBiome(overworld, overworldEntry, spawnPos, radius);
+        }
+
         // Load zones persisted in a previous session and route them to their
         // dimension — the scans below see them through the mixins, so their
         // requirements count as satisfied and only genuinely new requirements
@@ -109,7 +122,7 @@ public class WorldBorderHandler {
         });
 
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(
-                overworld, spawnPos, radius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
+                overworld, spawnPos, usableRadius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
 
         // Nether biome guarantee. No custom Nether border: vanilla shares one
         // border across dimensions and the client always renders the overworld
@@ -127,7 +140,7 @@ public class WorldBorderHandler {
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
         if (firstRun) {
-            handleStructurePhase(overworld, radius, biomeScanResult);
+            handleStructurePhase(overworld, usableRadius, biomeScanResult);
 
             // Write marker file
             try {
@@ -152,6 +165,57 @@ public class WorldBorderHandler {
         if (hasZones) {
             ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries());
         }
+    }
+
+    /**
+     * Builds and registers the border biome ring from config. Returns the
+     * usable radius (world radius minus the ring width) that all other
+     * placement must stay within, or the full radius if the ring is disabled
+     * due to a bad biome id.
+     */
+    private int setupBorderBiome(ServerLevel overworld, ForcedBiomeZoneManager.DimensionEntry entry,
+                                 BlockPos spawnPos, int radius) {
+        ResourceLocation biomeId = ResourceLocation.tryParse(ModConfigs.BORDER_BIOME.get());
+        Registry<Biome> biomeRegistry = overworld.registryAccess().registryOrThrow(Registries.BIOME);
+        Holder<Biome> biome = biomeId == null ? null
+                : biomeRegistry.getHolder(ResourceKey.create(Registries.BIOME, biomeId)).orElse(null);
+        if (biome == null) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] Unknown border biome \"{}\" — border biome ring disabled.",
+                    ModConfigs.BORDER_BIOME.get());
+            return radius;
+        }
+
+        if (!ModConfigs.TERRAIN_SHAPING.get()) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] borderBiomeEnabled works best with terrainShaping enabled — " +
+                    "without it the ring biome is only painted onto the existing terrain.");
+        }
+
+        int width = ModConfigs.BORDER_BIOME_WIDTH.get();
+        int usableRadius = Math.max(200, radius - width);
+
+        Climate.Sampler sampler = null;
+        try {
+            sampler = overworld.getChunkSource().randomState().sampler();
+        } catch (Exception ignored) {}
+
+        // Morph target picked from the climate at the ring's inner edge (east
+        // of spawn) — deterministic, and minimal disturbance for most seeds
+        ZoneClimateTarget morphTarget = ClimateMatcher.computeMorphTarget(
+                biome, overworld.getChunkSource().getGenerator().getBiomeSource(), sampler,
+                spawnPos.getX() + usableRadius, spawnPos.getZ());
+        if (morphTarget == null) {
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] No climate parameter points for border biome {} — " +
+                    "the ring will use a hard override without edge morphing.", biomeId);
+        }
+
+        ForcedBiomeZone.TerrainShaping shaping = BorderBiomeRing.shapingFor(biome);
+        BorderBiomeRing ring = new BorderBiomeRing(spawnPos.getX(), spawnPos.getZ(), usableRadius,
+                radius - usableRadius, biome, morphTarget, shaping);
+        entry.setBorderRing(ring);
+
+        BoundedWorlds.LOGGER.info("[Bounded Worlds] Border biome ring enabled: {} beyond radius {} (width {}, terrain={}).",
+                biomeId, usableRadius, radius - usableRadius, shaping);
+        return usableRadius;
     }
 
     @javax.annotation.Nullable

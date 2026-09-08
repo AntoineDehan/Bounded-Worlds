@@ -33,6 +33,9 @@ public class ForcedBiomeZoneManager {
         // CopyOnWriteArrayList for thread-safety (server thread writes, worldgen threads read)
         private final List<ForcedBiomeZone> zones = new CopyOnWriteArrayList<>();
         private volatile boolean hasShapingZones;
+        // Optional Terraria-style border biome ring (write-once at server start)
+        @Nullable
+        private volatile BorderBiomeRing borderRing;
 
         private DimensionEntry(ResourceLocation dimensionId, boolean overworld, BiomeSource biomeSource,
                                @Nullable Climate.Sampler sampler, @Nullable Object randomState) {
@@ -50,6 +53,13 @@ public class ForcedBiomeZoneManager {
         public void addZone(ForcedBiomeZone zone) {
             zones.add(zone);
             if (zone.terrainShaping() != ForcedBiomeZone.TerrainShaping.NONE) {
+                hasShapingZones = true;
+            }
+        }
+
+        public void setBorderRing(BorderBiomeRing ring) {
+            this.borderRing = ring;
+            if (ring.terrainShaping() != ForcedBiomeZone.TerrainShaping.NONE) {
                 hasShapingZones = true;
             }
         }
@@ -162,6 +172,16 @@ public class ForcedBiomeZoneManager {
                 return zone.biome();
             }
         }
+
+        // Border ring is checked after zones — pre-existing zones near the
+        // border keep priority. Same Y rule as zones: with a morph target the
+        // hard override only applies near the surface, caves survive below.
+        BorderBiomeRing ring = entry.borderRing;
+        if (ring != null
+                && !(ring.climateTarget() != null && blockY < HARD_OVERRIDE_MIN_Y)
+                && ring.contains(blockX, blockZ)) {
+            return ring.biome();
+        }
         return null;
     }
 
@@ -180,6 +200,14 @@ public class ForcedBiomeZoneManager {
             double factor = zone.morphFactor(blockX, blockZ);
             if (factor > 0) {
                 return new ClimateMorph(factor, target);
+            }
+        }
+
+        BorderBiomeRing ring = entry.borderRing;
+        if (ring != null && ring.climateTarget() != null) {
+            double factor = ring.edgeFactor(blockX, blockZ);
+            if (factor > 0) {
+                return new ClimateMorph(factor, ring.climateTarget());
             }
         }
         return null;
@@ -213,6 +241,14 @@ public class ForcedBiomeZoneManager {
             double factor = zone.edgeFactor(blockX, blockZ);
             if (factor > 0) {
                 return new TerrainShape(factor, zone.terrainShaping());
+            }
+        }
+
+        BorderBiomeRing ring = entry.borderRing;
+        if (ring != null && ring.terrainShaping() != ForcedBiomeZone.TerrainShaping.NONE) {
+            double factor = ring.edgeFactor(blockX, blockZ);
+            if (factor > 0) {
+                return new TerrainShape(factor, ring.terrainShaping());
             }
         }
         return null;
