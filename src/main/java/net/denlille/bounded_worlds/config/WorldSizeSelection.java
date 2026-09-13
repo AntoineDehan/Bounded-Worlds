@@ -11,21 +11,26 @@ import javax.annotation.Nullable;
  */
 public final class WorldSizeSelection {
 
-    private static volatile WorldSize pending = WorldSize.MEDIUM;
+    // No default: the player must actively pick a size in the screen. A null
+    // pending blocks "Create New World" (see CreateWorldScreenMixin); dedicated
+    // servers never set it and use the defaultWorldSize config instead.
+    @Nullable
+    private static volatile WorldSize pending;
     @Nullable
     private static volatile WorldSize armed;
 
     private WorldSizeSelection() {}
 
-    /** Resets the pending choice when the creation screen (re)builds its World tab. */
+    /** Clears the pending choice when the creation screen builds its World tab. */
     public static void resetPending() {
-        pending = WorldSize.MEDIUM;
+        pending = null;
     }
 
     public static void setPending(WorldSize size) {
         pending = size;
     }
 
+    @Nullable
     public static WorldSize pending() {
         return pending;
     }

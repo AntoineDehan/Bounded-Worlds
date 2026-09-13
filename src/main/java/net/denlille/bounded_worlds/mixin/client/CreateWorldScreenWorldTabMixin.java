@@ -1,5 +1,6 @@
 package net.denlille.bounded_worlds.mixin.client;
 
+import net.denlille.bounded_worlds.client.WorldSizeUi;
 import net.denlille.bounded_worlds.config.WorldSize;
 import net.denlille.bounded_worlds.config.WorldSizeSelection;
 import net.minecraft.client.Minecraft;
@@ -20,10 +21,11 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * Adds a "World size" row (Small / Medium / Large) to the World tab of the
- * world-creation screen. The selected button is shown pressed (inactive); the
- * choice is armed when the player clicks "Create New World" and consumed by
- * WorldBorderHandler on first server start.
+ * Adds a "World Size" row (Small / Medium / Large) to the World tab of the
+ * world-creation screen. Nothing is preselected — the player must pick one
+ * (CreateWorldScreenMixin blocks creation otherwise); the picked button is
+ * shown pressed (inactive). The choice is armed when the player clicks
+ * "Create New World" and consumed by WorldBorderHandler on first server start.
  */
 @Mixin(targets = "net.minecraft.client.gui.screens.worldselection.CreateWorldScreen$WorldTab")
 public abstract class CreateWorldScreenWorldTabMixin {
@@ -40,9 +42,11 @@ public abstract class CreateWorldScreenWorldTabMixin {
 
         GridLayout section = new GridLayout().rowSpacing(4);
         GridLayout.RowHelper rows = section.createRowHelper(1);
-        rows.addChild(new StringWidget(
+        StringWidget title = new StringWidget(
                 Component.translatable("bounded_worlds.createWorld.worldSize"),
-                Minecraft.getInstance().font).alignLeft());
+                Minecraft.getInstance().font).alignLeft();
+        WorldSizeUi.setTitle(title);
+        rows.addChild(title);
 
         GridLayout buttonRow = new GridLayout().columnSpacing(5);
         GridLayout.RowHelper columns = buttonRow.createRowHelper(WorldSize.values().length);
@@ -57,7 +61,6 @@ public abstract class CreateWorldScreenWorldTabMixin {
             buttons.put(size, button);
             columns.addChild(button);
         }
-        boundedWorlds$select(WorldSizeSelection.pending(), buttons);
         rows.addChild(buttonRow);
 
         rowHelper.addChild(section, 2);
@@ -66,6 +69,7 @@ public abstract class CreateWorldScreenWorldTabMixin {
     @Unique
     private static void boundedWorlds$select(WorldSize size, Map<WorldSize, Button> buttons) {
         WorldSizeSelection.setPending(size);
+        WorldSizeUi.clearMissingSelection();
         buttons.forEach((tier, button) -> button.active = tier != size);
     }
 }
