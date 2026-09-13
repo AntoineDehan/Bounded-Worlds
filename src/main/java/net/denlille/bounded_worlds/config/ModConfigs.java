@@ -8,7 +8,10 @@ import java.util.List;
 public class ModConfigs {
 
     public static final ForgeConfigSpec SPEC;
-    public static final ForgeConfigSpec.IntValue WORLD_RADIUS;
+    public static final ForgeConfigSpec.IntValue SMALL_RADIUS;
+    public static final ForgeConfigSpec.IntValue MEDIUM_RADIUS;
+    public static final ForgeConfigSpec.IntValue LARGE_RADIUS;
+    public static final ForgeConfigSpec.EnumValue<WorldSize> DEFAULT_WORLD_SIZE;
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_BIOMES;
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
@@ -27,10 +30,21 @@ public class ModConfigs {
         builder.comment("Bounded Worlds Configuration");
         builder.push("world");
 
-        WORLD_RADIUS = builder
-                .comment("World radius in blocks around spawn; sets the world border on first world creation.",
-                         "Delete 'bounded_worlds_initialized.dat' in the world folder to re-apply.")
-                .defineInRange("worldRadius", 3000, 100, 20000);
+        SMALL_RADIUS = builder
+                .comment("Radius in blocks of each world size tier, selectable in the world-creation screen.",
+                         "The border is set on first world creation, centered on spawn.")
+                .defineInRange("smallRadius", 1500, 100, 20000);
+
+        MEDIUM_RADIUS = builder
+                .defineInRange("mediumRadius", 3000, 100, 20000);
+
+        LARGE_RADIUS = builder
+                .defineInRange("largeRadius", 5000, 100, 20000);
+
+        DEFAULT_WORLD_SIZE = builder
+                .comment("Size used when none was picked in the creation screen (dedicated servers,",
+                         "or re-init after deleting 'bounded_worlds_initialized.dat' in the world folder).")
+                .defineEnum("defaultWorldSize", WorldSize.MEDIUM);
 
         REQUIRED_BIOMES = builder
                 .comment("Biomes or #tags that must exist within the border, e.g. \"minecraft:mushroom_fields\", \"#forge:is_hot\".",
@@ -70,7 +84,7 @@ public class ModConfigs {
 
         builder.pop(); // world
 
-        builder.comment("Nether requirements. Zones are placed within worldRadius / 8 of the scaled spawn",
+        builder.comment("Nether requirements. Zones are placed within world radius / 8 of the scaled spawn",
                         "(the Nether shares the overworld's border).");
         builder.push("nether");
 

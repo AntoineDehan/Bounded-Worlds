@@ -15,6 +15,8 @@ import net.denlille.bounded_worlds.biome.ZoneClimateTarget;
 import net.denlille.bounded_worlds.biome.ZonePersistence;
 import net.denlille.bounded_worlds.config.CompassDirection;
 import net.denlille.bounded_worlds.config.ModConfigs;
+import net.denlille.bounded_worlds.config.WorldSize;
+import net.denlille.bounded_worlds.config.WorldSizeSelection;
 import net.denlille.bounded_worlds.structure.StructureScanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -51,13 +53,14 @@ public class WorldBorderHandler {
             return;
         }
 
-        int radius = ModConfigs.WORLD_RADIUS.get();
         BlockPos spawnPos = overworld.getSharedSpawnPos();
 
         // Check if this is the first time the mod runs on this world
         Path worldDir = event.getServer().getWorldPath(LevelResource.ROOT);
         Path markerPath = worldDir.resolve(MARKER_FILE);
         boolean firstRun = !Files.exists(markerPath);
+
+        int radius = resolveRadius(overworld, firstRun);
 
         // Phase 1: World border (only on first run)
         if (firstRun) {
@@ -165,6 +168,34 @@ public class WorldBorderHandler {
         if (hasZones) {
             ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries());
         }
+    }
+
+    /**
+     * The world radius for this session. First run: the size tier picked in the
+     * world-creation screen (armed on "Create New World"), falling back to the
+     * configured default (dedicated servers, marker-file re-init). Afterwards:
+     * derived from the existing world border, so the radius stays consistent
+     * with the actual border even if the config tiers change mid-world.
+     */
+    private int resolveRadius(ServerLevel overworld, boolean firstRun) {
+        // Always consume so a selection never lingers into a later, unrelated start
+        WorldSize selected = WorldSizeSelection.consumeArmed();
+        if (firstRun) {
+            WorldSize size = selected != null ? selected : ModConfigs.DEFAULT_WORLD_SIZE.get();
+            int radius = size.radius();
+            BoundedWorlds.LOGGER.info("[Bounded Worlds] World size {}{} -> radius {} blocks.",
+                    size, selected != null ? " (picked in creation screen)" : " (config default)", radius);
+            return radius;
+        }
+
+        int borderRadius = (int) Math.round(overworld.getWorldBorder().getSize() / 2.0);
+        if (borderRadius > 0 && borderRadius <= 20000) {
+            return borderRadius;
+        }
+        int fallback = ModConfigs.DEFAULT_WORLD_SIZE.get().radius();
+        BoundedWorlds.LOGGER.warn("[Bounded Worlds] World is initialized but its border radius ({}) looks unmanaged — " +
+                "using defaultWorldSize radius {} for scans.", borderRadius, fallback);
+        return fallback;
     }
 
     /**

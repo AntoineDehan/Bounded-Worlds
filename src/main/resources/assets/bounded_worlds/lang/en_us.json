@@ -1,0 +1,7 @@
+{
+  "bounded_worlds.createWorld.worldSize": "World Size",
+  "bounded_worlds.createWorld.worldSize.small": "Small",
+  "bounded_worlds.createWorld.worldSize.medium": "Medium",
+  "bounded_worlds.createWorld.worldSize.large": "Large",
+  "bounded_worlds.createWorld.worldSize.radius": "Radius: %s blocks"
+}
