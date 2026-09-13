@@ -10,6 +10,10 @@
     "MultiNoiseBiomeSourceAccessor",
     "RandomStateMixin"
   ],
+  "client": [
+    "client.CreateWorldScreenMixin",
+    "client.CreateWorldScreenWorldTabMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
