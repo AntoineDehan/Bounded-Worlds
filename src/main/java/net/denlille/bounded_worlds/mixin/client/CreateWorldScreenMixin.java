@@ -11,8 +11,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class CreateWorldScreenMixin {
 
     // "Create New World" clicked: the pending world size becomes the one the
-    // upcoming server start will consume.
-    @Inject(method = "onCreate", at = @At("HEAD"))
+    // upcoming server start will consume. require=0: degrade to the
+    // defaultWorldSize config instead of crashing if a mod conflicts here.
+    @Inject(method = "onCreate", at = @At("HEAD"), require = 0)
     private void boundedWorlds$armWorldSize(CallbackInfo ci) {
         WorldSizeSelection.armPending();
     }

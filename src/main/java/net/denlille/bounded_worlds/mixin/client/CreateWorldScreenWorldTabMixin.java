@@ -30,7 +30,10 @@ public abstract class CreateWorldScreenWorldTabMixin {
 
     // Captures the tab's 2-column RowHelper local so our row follows the
     // vanilla layout (same slot pattern as the seed section: full-width child).
-    @Inject(method = "<init>", at = @At("TAIL"), locals = LocalCapture.CAPTURE_FAILHARD)
+    // require=0 + FAILSOFT: if another mod reshapes this constructor the row is
+    // skipped with a Mixin warning instead of crashing — the mod still works,
+    // falling back to the defaultWorldSize config.
+    @Inject(method = "<init>", at = @At("TAIL"), require = 0, locals = LocalCapture.CAPTURE_FAILSOFT)
     private void boundedWorlds$addWorldSizeRow(CreateWorldScreen screen, CallbackInfo ci,
                                                GridLayout.RowHelper rowHelper) {
         WorldSizeSelection.resetPending();
