@@ -60,6 +60,14 @@ public class WorldBorderHandler {
             return;
         }
 
+        // Loaded first: a corrupt requirements file fails the start here, before
+        // the border is touched or the world-size selection is consumed.
+        Map<ResourceLocation, RequirementsConfig.DimensionRequirements> requirements = RequirementsConfig.load();
+        RequirementsConfig.DimensionRequirements overworldReq =
+                requirements.getOrDefault(Level.OVERWORLD.location(), RequirementsConfig.DimensionRequirements.EMPTY);
+        RequirementsConfig.DimensionRequirements netherReq =
+                requirements.getOrDefault(Level.NETHER.location(), RequirementsConfig.DimensionRequirements.EMPTY);
+
         BlockPos spawnPos = overworld.getSharedSpawnPos();
 
         Path worldDir = event.getServer().getWorldPath(LevelResource.ROOT);
@@ -105,14 +113,6 @@ public class WorldBorderHandler {
         if (ModConfigs.BORDER_BIOME_ENABLED.get()) {
             usableRadius = setupBorderBiome(overworld, overworldEntry, spawnPos, radius);
         }
-
-        // All requirements (biomes + structures, every dimension) come from
-        // bounded_worlds-requirements.json.
-        Map<ResourceLocation, RequirementsConfig.DimensionRequirements> requirements = RequirementsConfig.load();
-        RequirementsConfig.DimensionRequirements overworldReq =
-                requirements.getOrDefault(Level.OVERWORLD.location(), RequirementsConfig.DimensionRequirements.EMPTY);
-        RequirementsConfig.DimensionRequirements netherReq =
-                requirements.getOrDefault(Level.NETHER.location(), RequirementsConfig.DimensionRequirements.EMPTY);
 
         // Custom (modded/datapack) dimensions. Their entries must exist before
         // persisted zones are routed below, otherwise their zones would be

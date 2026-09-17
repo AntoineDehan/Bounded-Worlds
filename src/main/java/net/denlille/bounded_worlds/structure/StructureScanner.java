@@ -90,7 +90,7 @@ public class StructureScanner {
 
             Structure structure = structureHolder.value();
 
-            int existing = countExisting(level, structureHolder, spawnPos, radius, requirement.min());
+            int existing = countExisting(level, structureHolder, spawnPos, radius, requirement.min(), usedChunks);
             if (existing >= requirement.min()) {
                 BoundedWorlds.LOGGER.info("[Bounded Worlds]   FOUND: {} ({}/{} within radius)",
                         idStr, existing, requirement.min());
@@ -151,9 +151,11 @@ public class StructureScanner {
      * stopping at {@code enough}. The bounded world makes this exact: every
      * natural placement cell is enumerated and checked with the same logic
      * /locate uses (works on ungenerated chunks — no chunk loading).
+     * Counted chunks are added to {@code usedChunks} so force-placements keep
+     * their distance from natural instances too.
      */
     private static int countExisting(ServerLevel level, Holder<Structure> holder,
-                                     BlockPos center, int radius, int enough) {
+                                     BlockPos center, int radius, int enough, Set<Long> usedChunks) {
         ChunkGeneratorStructureState structureState = level.getChunkSource().getGeneratorState();
         List<StructurePlacement> placements = structureState.getPlacementsForStructure(holder);
         if (placements.isEmpty()) {
@@ -164,7 +166,9 @@ public class StructureScanner {
         StructureManager structureManager = level.structureManager();
         int centerChunkX = SectionPos.blockToSectionCoord(center.getX());
         int centerChunkZ = SectionPos.blockToSectionCoord(center.getZ());
-        int chunkRadius = radius / 16;
+        // +1 covers the partial chunk ring at the edge (the per-candidate block
+        // distance check below prevents any over-count)
+        int chunkRadius = radius / 16 + 1;
         long radiusSq = (long) radius * radius;
         Set<Long> countedChunks = new HashSet<>();
         int count = 0;
@@ -181,7 +185,7 @@ public class StructureScanner {
                         ChunkPos candidate = spread.getPotentialStructureChunk(
                                 structureState.getLevelSeed(), regionX * spacing, regionZ * spacing);
                         if (countsAsPresent(candidate, placement, structureState, structureManager, structure,
-                                center, radiusSq, countedChunks)) {
+                                center, radiusSq, countedChunks, usedChunks)) {
                             count++;
                             if (count >= enough) return count;
                         }
@@ -192,7 +196,7 @@ public class StructureScanner {
                 if (ringPositions == null) continue;
                 for (ChunkPos candidate : ringPositions) {
                     if (countsAsPresent(candidate, placement, structureState, structureManager, structure,
-                            center, radiusSq, countedChunks)) {
+                            center, radiusSq, countedChunks, usedChunks)) {
                         count++;
                         if (count >= enough) return count;
                     }
@@ -206,6 +210,7 @@ public class StructureScanner {
                     long dz = nearest.getZ() - center.getZ();
                     if (dx * dx + dz * dz <= radiusSq) {
                         count++;
+                        usedChunks.add(new ChunkPos(nearest).toLong());
                         if (count >= enough) return count;
                     }
                 }
@@ -223,7 +228,8 @@ public class StructureScanner {
     private static boolean countsAsPresent(ChunkPos candidate, StructurePlacement placement,
                                            ChunkGeneratorStructureState structureState,
                                            StructureManager structureManager, Structure structure,
-                                           BlockPos center, long radiusSq, Set<Long> countedChunks) {
+                                           BlockPos center, long radiusSq,
+                                           Set<Long> countedChunks, Set<Long> usedChunks) {
         long dx = candidate.getMiddleBlockX() - center.getX();
         long dz = candidate.getMiddleBlockZ() - center.getZ();
         if (dx * dx + dz * dz > radiusSq) return false;
@@ -232,8 +238,12 @@ public class StructureScanner {
         // START_PRESENT: would generate (or already has). CHUNK_LOAD_NEEDED: the
         // chunk was generated before this scan — the start was decided by the
         // same placement logic, so count it rather than force-loading the chunk.
-        return structureManager.checkStructurePresence(candidate, structure, false)
+        boolean present = structureManager.checkStructurePresence(candidate, structure, false)
                 != StructureCheckResult.START_NOT_PRESENT;
+        if (present) {
+            usedChunks.add(candidate.toLong());
+        }
+        return present;
     }
 
     @Nullable

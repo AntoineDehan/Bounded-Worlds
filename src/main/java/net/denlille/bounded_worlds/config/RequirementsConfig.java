@@ -62,6 +62,10 @@ public final class RequirementsConfig {
     /**
      * Returns requirements per dimension id, in file order (deterministic).
      * Creates a commented default file (migrating pre-0.6.0 settings) if absent.
+     *
+     * @throws IllegalStateException when the file exists but cannot be parsed —
+     *         failing fast beats silently creating a world with no guarantees
+     *         and a first-run marker that would never let structures re-check.
      */
     public static Map<ResourceLocation, DimensionRequirements> load() {
         Path path = FMLPaths.CONFIGDIR.get().resolve(FILE_NAME);
@@ -69,15 +73,21 @@ public final class RequirementsConfig {
             // Normally created by migrateIfNeeded() at mod construction; this
             // covers the file being deleted while the game is running.
             migrateIfNeeded();
+            if (!Files.exists(path)) {
+                // Creation was aborted (unreadable old TOML, disk error) — the
+                // migration already logged why.
+                BoundedWorlds.LOGGER.error("[Bounded Worlds] {} could not be created — no requirements loaded.", FILE_NAME);
+                return Map.of();
+            }
         }
 
         JsonObject root;
         try {
             root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
         } catch (Exception e) {
-            BoundedWorlds.LOGGER.error("[Bounded Worlds] Could not read {} ({}) — NO requirements loaded.",
-                    FILE_NAME, e.getMessage());
-            return Map.of();
+            throw new IllegalStateException("[Bounded Worlds] config/" + FILE_NAME + " is invalid JSON (" +
+                    e.getMessage() + "). Fix or delete the file, then restart — starting the world without it " +
+                    "would permanently skip its biome/structure guarantees.", e);
         }
 
         int version = 1;
