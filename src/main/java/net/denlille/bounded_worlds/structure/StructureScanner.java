@@ -269,10 +269,11 @@ public class StructureScanner {
     }
 
     /**
-     * Force-places on the nearest free cell of the structure's own placement
-     * grid. If the biome there doesn't fit, a forced biome zone is created on
-     * the cell first (with terrain shaping — this also handles water biomes,
-     * e.g. a monument gets a deep_ocean basin carved on land-only maps).
+     * Force-places on a free cell of the structure's own placement grid.
+     * Cells whose biome already fits have absolute priority (no zone needed);
+     * otherwise a forced biome zone is created on the cell — shrunk to fit
+     * near the border, and as a last resort skipped entirely: the structure
+     * still generates in the surrounding biome, better than not existing.
      */
     @Nullable
     private static GenerateResult placeAtPlacementCell(ServerLevel level, Structure structure,
@@ -286,42 +287,26 @@ public class StructureScanner {
             sampler = randomState.sampler();
         } catch (Exception ignored) {}
 
+        // Pass 1: cells already in a valid biome (through the mixins, so an
+        // existing forced zone counts). Pass 2: everything else, zone-backed.
+        List<ChunkPos> needZone = new ArrayList<>();
         for (ChunkPos cell : cells) {
             if (usedChunks.contains(cell.toLong())) continue;
-            int blockX = cell.getMiddleBlockX();
-            int blockZ = cell.getMiddleBlockZ();
-
-            // Goes through the mixins: an existing forced zone counts as its biome
-            boolean biomeFits = sampler != null && structure.biomes().contains(
-                    biomeSource.getNoiseBiome(blockX >> 2, 64 >> 2, blockZ >> 2, sampler));
-
-            if (!biomeFits && !createZoneForCell(level, structure, blockX, blockZ,
-                    center, radius, sizeCategory, random, structureId, biomeSource, sampler)) {
-                continue; // zone can't fit here (border or overlap) — next cell
+            boolean biomeFits = sampler != null && structure.biomes().contains(biomeSource.getNoiseBiome(
+                    cell.getMiddleBlockX() >> 2, 64 >> 2, cell.getMiddleBlockZ() >> 2, sampler));
+            if (!biomeFits) {
+                needZone.add(cell);
+                continue;
             }
+            GenerateResult result = tryGenerateAtCell(level, structure, biomeSource, randomState, cell);
+            if (result != null) return result;
+        }
 
-            try {
-                StructureStart start = structure.generate(
-                        level.registryAccess(),
-                        level.getChunkSource().getGenerator(),
-                        biomeSource,
-                        randomState,
-                        level.getStructureManager(),
-                        level.getSeed(),
-                        cell,
-                        0,
-                        level,
-                        holder -> true
-                );
-                if (start != null && start != StructureStart.INVALID_START) {
-                    return new GenerateResult(new BlockPos(blockX, 0, blockZ), cell, start);
-                }
-                BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure.generate() returned INVALID at cell ({}, {})",
-                        cell.x, cell.z);
-            } catch (Exception e) {
-                BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure.generate() threw at cell ({}, {}): {}",
-                        cell.x, cell.z, e.getMessage());
-            }
+        for (ChunkPos cell : needZone) {
+            createZoneForCell(level, structure, cell.getMiddleBlockX(), cell.getMiddleBlockZ(),
+                    center, radius, sizeCategory, random, structureId, biomeSource, sampler);
+            GenerateResult result = tryGenerateAtCell(level, structure, biomeSource, randomState, cell);
+            if (result != null) return result;
         }
 
         BoundedWorlds.LOGGER.warn("[Bounded Worlds]   No usable free placement cell left for {} " +
@@ -329,28 +314,72 @@ public class StructureScanner {
         return null;
     }
 
+    @Nullable
+    private static GenerateResult tryGenerateAtCell(ServerLevel level, Structure structure,
+                                                    BiomeSource biomeSource, RandomState randomState, ChunkPos cell) {
+        try {
+            StructureStart start = structure.generate(
+                    level.registryAccess(),
+                    level.getChunkSource().getGenerator(),
+                    biomeSource,
+                    randomState,
+                    level.getStructureManager(),
+                    level.getSeed(),
+                    cell,
+                    0,
+                    level,
+                    holder -> true
+            );
+            if (start != null && start != StructureStart.INVALID_START) {
+                return new GenerateResult(new BlockPos(cell.getMiddleBlockX(), 0, cell.getMiddleBlockZ()), cell, start);
+            }
+            BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure.generate() returned INVALID at cell ({}, {})",
+                    cell.x, cell.z);
+        } catch (Exception e) {
+            BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure.generate() threw at cell ({}, {}): {}",
+                    cell.x, cell.z, e.getMessage());
+        }
+        return null;
+    }
+
     /**
      * Registers a forced biome zone on a placement cell so the structure's
      * biome (and terrain) fit. Picks the structure biome whose climate best
-     * matches the cell; false when no zone fits there.
+     * matches the cell; the zone shrinks (down to 150 blocks) to fit near the
+     * border or between other zones, and is skipped entirely as a last resort —
+     * the caller places the structure in the surrounding biome anyway.
      */
-    private static boolean createZoneForCell(ServerLevel level, Structure structure, int blockX, int blockZ,
-                                             BlockPos center, int radius, BiomeZoneSize sizeCategory,
-                                             Random random, String structureId,
-                                             BiomeSource biomeSource, @Nullable Climate.Sampler sampler) {
+    private static void createZoneForCell(ServerLevel level, Structure structure, int blockX, int blockZ,
+                                          BlockPos center, int radius, BiomeZoneSize sizeCategory,
+                                          Random random, String structureId,
+                                          BiomeSource biomeSource, @Nullable Climate.Sampler sampler) {
         ForcedBiomeZoneManager.DimensionEntry dimensionEntry = ForcedBiomeZoneManager.entryFor(level);
-        if (dimensionEntry == null) return false;
+        if (dimensionEntry == null) return;
 
-        // At least 250 blocks — smaller zones can't reliably host a structure
-        int zoneSize = Math.max(sizeCategory.randomSize(random), 250);
-        if (!isValidZonePlacement(blockX, blockZ, center.getX(), center.getZ(), radius,
-                ForcedBiomeZone.maxFootprint(zoneSize), dimensionEntry)) {
-            return false;
+        // Preferred: at least 250 blocks so the whole structure sits in-biome;
+        // shrink toward 150 (still covers the biome check and most footprints)
+        int preferred = Math.max(sizeCategory.randomSize(random), 250);
+        int zoneSize = -1;
+        for (int candidate = preferred; candidate >= 150; candidate -= 25) {
+            if (isValidZonePlacement(blockX, blockZ, center.getX(), center.getZ(), radius,
+                    ForcedBiomeZone.maxFootprint(candidate), dimensionEntry)) {
+                zoneSize = candidate;
+                break;
+            }
+        }
+        if (zoneSize < 0) {
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds]   No biome zone fits at cell ({}, {}) — " +
+                    "placing {} in the surrounding biome as a last resort.", blockX, blockZ, structureId);
+            return;
+        }
+        if (zoneSize < preferred) {
+            BoundedWorlds.LOGGER.info("[Bounded Worlds]   Zone at cell ({}, {}) shrunk to {} to fit.",
+                    blockX, blockZ, zoneSize);
         }
 
         List<Holder<Biome>> members = new ArrayList<>();
         structure.biomes().forEach(members::add);
-        if (members.isEmpty()) return false;
+        if (members.isEmpty()) return;
         members.sort(java.util.Comparator.comparing(h -> h.unwrapKey()
                 .map(k -> k.location().toString()).orElse("")));
 
@@ -387,7 +416,6 @@ public class StructureScanner {
         dimensionEntry.addZone(zone);
         BoundedWorlds.LOGGER.info("[Bounded Worlds]   Created forced biome zone {} at cell ({}, {}), size {}, terrain={}",
                 biomeName, blockX, blockZ, zoneSize, shaping);
-        return true;
     }
 
     @Nullable
