@@ -57,10 +57,9 @@ public class BiomeZonePlanner {
         List<ForcedBiomeZone> allZones = new ArrayList<>(existingZones);
 
         for (BiomeRequirement req : missing) {
-            // 1. Generate a random size for this zone
             int zoneSize = sizeCategory.randomSize(random);
 
-            // 2. Pick a concrete biome. For tags, prefer the member whose climate
+            // Pick a concrete biome. For tags, prefer the member whose climate
             // best matches the available terrain (joint biome+location choice);
             // otherwise fall back to a seeded random member.
             Holder<Biome> chosenBiome;
@@ -88,11 +87,10 @@ public class BiomeZonePlanner {
                     .map(ResourceLocation::toString)
                     .orElse("unknown");
 
-            // 3. Classify the biome (temperature + humidity)
             BiomeClimateClassifier.TemperatureCategory tempCategory = BiomeClimateClassifier.getTemperature(chosenBiome);
             BiomeClimateClassifier.HumidityCategory humidCategory = BiomeClimateClassifier.getHumidity(chosenBiome);
 
-            // 4. Find a location — preferably where the existing climate already
+            // Find a location — preferably where the existing climate already
             // fits the biome, so the terrain under the zone matches (no ocean
             // painted on hills, no peaks biome on flat ground).
             if (placement == null) {
@@ -133,7 +131,6 @@ public class BiomeZonePlanner {
             }
 
             if (placement == null) {
-                // Fallback: place at a random position in the correct region
                 int maxAttempts = directional != null ? 100 : 50;
                 placement = findFallbackLocation(centerX, centerZ, worldRadius, zoneSize,
                         allZones, random, directional, tempCategory, humidCategory, maxAttempts);
@@ -144,7 +141,7 @@ public class BiomeZonePlanner {
                 continue;
             }
 
-            // 5. Climate morph target for smooth vanilla transitions at the edges.
+            // Climate morph target for smooth vanilla transitions at the edges.
             // Null (hard-override-only zone) when the biome has no parameter points.
             ZoneClimateTarget morphTarget = ClimateMatcher.computeMorphTarget(
                     chosenBiome, biomeSource, sampler, placement.getX(), placement.getZ());
@@ -153,10 +150,8 @@ public class BiomeZonePlanner {
                         "zone will use hard override without edge morphing.", biomeName);
             }
 
-            // 6. Terrain shaping when the terrain doesn't fit the biome
-            // (land biome over ocean → raise an island; ocean biome over land →
-            // carve a basin). Overworld only: raising islands or carving water
-            // basins makes no sense in the Nether's cave terrain.
+            // Terrain shaping is overworld only: raising islands or carving
+            // water basins makes no sense in the Nether's cave terrain.
             ForcedBiomeZone.TerrainShaping terrainShaping = overworldLevel
                     ? decideTerrainShaping(chosenBiome, sampler, placement)
                     : ForcedBiomeZone.TerrainShaping.NONE;
@@ -353,7 +348,6 @@ public class BiomeZonePlanner {
             List<ForcedBiomeZone> existingZones, Random random,
             @Nullable DirectionalPlacement directional) {
 
-        // Find all existing biomes of the same temperature category
         List<BlockPos> compatiblePositions = new ArrayList<>();
         for (Map.Entry<Holder<Biome>, BlockPos> entry : biomeLocations.entrySet()) {
             if (BiomeClimateClassifier.getTemperature(entry.getKey()) == targetTemp) {
@@ -382,7 +376,6 @@ public class BiomeZonePlanner {
                     continue;
                 }
 
-                // Directional check: must be in the correct region
                 if (directional != null && !directional.isInCorrectRegion(
                         px, pz, centerX, centerZ, worldRadius, targetTemp, targetHumid)) {
                     continue;
@@ -404,7 +397,6 @@ public class BiomeZonePlanner {
             BiomeClimateClassifier.HumidityCategory targetHumid,
             int maxAttempts) {
 
-        // Get angle constraints if directional placement is active
         double minAngle = 0;
         double maxAngle = 2 * Math.PI;
         if (directional != null) {
@@ -441,7 +433,6 @@ public class BiomeZonePlanner {
         // Max extent of the zone: noise distortion + climate morphing halo
         double maxRadius = ForcedBiomeZone.maxFootprint(zoneSize);
 
-        // Check that the zone fits within the world radius
         long dx = (long)(px - centerX);
         long dz = (long)(pz - centerZ);
         double distFromCenter = Math.sqrt(dx * dx + dz * dz);
@@ -449,7 +440,6 @@ public class BiomeZonePlanner {
             return false;
         }
 
-        // Check no overlap with existing forced zones (circular distance check)
         for (ForcedBiomeZone existing : existingZones) {
             double minDist = existing.maxFootprint() + maxRadius + 32; // 32 blocks padding
             double edx = px - existing.centerX();

@@ -378,7 +378,6 @@ public class StructureScanner {
         HolderSet<Biome> validBiomes = structure.biomes();
         BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
 
-        // Pick a non-ocean/river biome from the structure's valid biomes
         List<Holder<Biome>> candidates = new ArrayList<>();
         validBiomes.forEach(holder -> {
             if (!holder.is(BiomeTags.IS_OCEAN) && !holder.is(BiomeTags.IS_RIVER) && !holder.is(BiomeTags.IS_DEEP_OCEAN)) {
@@ -397,7 +396,7 @@ public class StructureScanner {
             return nameA.compareTo(nameB);
         });
 
-        // Generate a zone size large enough for a structure
+        // At least 250 blocks — smaller zones can't reliably host a structure
         int zoneSize = Math.max(sizeCategory.randomSize(random), 250);
 
         int centerX = center.getX();
@@ -486,7 +485,6 @@ public class StructureScanner {
         BoundedWorlds.LOGGER.info("[Bounded Worlds]   Fallback: created forced biome zone {} at ({}, {}), size {}",
                 desc, placement.getX(), placement.getZ(), zoneSize);
 
-        // Try Structure.generate() at the center of the new zone
         RandomState randomState = level.getChunkSource().randomState();
         ChunkPos chunkPos = new ChunkPos(placement);
 

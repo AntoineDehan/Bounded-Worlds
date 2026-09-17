@@ -62,7 +62,6 @@ public class WorldBorderHandler {
 
         BlockPos spawnPos = overworld.getSharedSpawnPos();
 
-        // Check if this is the first time the mod runs on this world
         Path worldDir = event.getServer().getWorldPath(LevelResource.ROOT);
         Path markerPath = worldDir.resolve(MARKER_FILE);
         boolean firstRun = !Files.exists(markerPath);
@@ -81,10 +80,8 @@ public class WorldBorderHandler {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] World already initialized, skipping world border setup.");
         }
 
-        // Build directional placement if enabled
         DirectionalPlacement directional = buildDirectionalPlacement(overworld.getSeed());
 
-        // Initialize directional climate bias if enabled
         DirectionalClimateManager.clear();
         if (directional != null) {
             DirectionalClimateManager.init(directional, spawnPos.getX(), spawnPos.getZ(), radius);
@@ -225,7 +222,6 @@ public class WorldBorderHandler {
         if (firstRun) {
             handleStructurePhase(overworld, usableRadius, biomeScanResult, overworldReq.structures());
 
-            // Write marker file
             try {
                 Files.createDirectories(markerPath.getParent());
                 Files.writeString(markerPath, "Bounded Worlds initialized. Delete this file to re-run border and structure setup. " +
@@ -335,13 +331,11 @@ public class WorldBorderHandler {
             return null;
         }
 
+        // RANDOM directions resolve from the world seed — stable across restarts
         Random seedRandom = new Random(worldSeed ^ 0xD1EC710AL);
-
-        // Resolve RANDOM directions using the world seed
         CompassDirection hotDir = ModConfigs.HOT_DIRECTION.get().resolve(seedRandom);
         CompassDirection humidDir = ModConfigs.HUMID_DIRECTION.get().resolvePerpendicularTo(hotDir, seedRandom);
 
-        // Validate perpendicularity
         if (!hotDir.isPerpendicularTo(humidDir)) {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] hotDirection ({}) and humidDirection ({}) are not perpendicular! Falling back to SOUTH/EAST.",
                     hotDir, humidDir);

@@ -39,7 +39,6 @@ public final class ForcedBiomeZone {
     private static final double MAX_HALO_WIDTH = 64.0;
     private static final double HALO_FRACTION = 0.4;
 
-    // Core zone data
     private final int centerX;
     private final int centerZ;
     private final int size;
@@ -48,7 +47,6 @@ public final class ForcedBiomeZone {
     // Climate values the halo morphs toward; null = hard-override-only zone
     @javax.annotation.Nullable
     private final ZoneClimateTarget climateTarget;
-    // How the terrain is reshaped when it doesn't fit the biome
     private final TerrainShaping terrainShaping;
 
     // Pre-computed derived values for hot-path performance
@@ -92,12 +90,10 @@ public final class ForcedBiomeZone {
         double minR = radius * (1.0 - NOISE_AMPLITUDE);
         this.minPossibleRadiusSq = minR * minR;
 
-        // Derive noise offsets from zone center for unique shapes per zone
         this.noiseOffsetX = centerX * 7 + centerZ * 13;
         this.noiseOffsetZ = centerZ * 7 + centerX * 17;
     }
 
-    // Accessors
     public int centerX() { return centerX; }
     public int centerZ() { return centerZ; }
     public int size() { return size; }
@@ -131,19 +127,12 @@ public final class ForcedBiomeZone {
         double dx = blockX - centerX;
         double dz = blockZ - centerZ;
 
-        // Compare squared distances first — avoids sqrt in ~95% of calls
+        // Squared-distance reject/accept first — avoids sqrt in ~95% of calls
         double distSq = dx * dx + dz * dz;
-
-        // Quick reject
         if (distSq > maxPossibleRadiusSq) return false;
-
-        // Quick accept
         if (distSq < minPossibleRadiusSq) return true;
 
-        // Now compute sqrt only for the borderline cases
         double distance = Math.sqrt(distSq);
-
-        // Noise uses zone-specific offsets for unique shapes
         double noiseValue = sampleNoise(blockX + noiseOffsetX, blockZ + noiseOffsetZ, radius);
         double effectiveRadius = radius + noiseValue * radius * NOISE_AMPLITUDE;
 
@@ -195,23 +184,17 @@ public final class ForcedBiomeZone {
         double nx = x / scale;
         double nz = z / scale;
 
-        // Grid cell coordinates
         int ix = (int) Math.floor(nx);
         int iz = (int) Math.floor(nz);
         double fx = nx - ix;
         double fz = nz - iz;
-
-        // Smoothstep interpolation
         fx = fx * fx * (3 - 2 * fx);
         fz = fz * fz * (3 - 2 * fz);
 
-        // Value noise at 4 corners
         double v00 = hashToDouble(ix, iz);
         double v10 = hashToDouble(ix + 1, iz);
         double v01 = hashToDouble(ix, iz + 1);
         double v11 = hashToDouble(ix + 1, iz + 1);
-
-        // Bilinear interpolation
         double v0 = v00 + (v10 - v00) * fx;
         double v1 = v01 + (v11 - v01) * fx;
         double value = v0 + (v1 - v0) * fz; // 0..1
@@ -234,16 +217,11 @@ public final class ForcedBiomeZone {
         double w1 = w01 + (w11 - w01) * fx2;
         double value2 = w0 + (w1 - w0) * fz2;
 
-        // Combine: first octave dominant, second adds detail
         double combined = value * 0.7 + value2 * 0.3;
-
-        // Map from 0..1 to -1..1
-        return combined * 2.0 - 1.0;
+        return combined * 2.0 - 1.0; // map 0..1 to -1..1
     }
 
-    /**
-     * Hash a 2D integer coordinate to a double in [0, 1).
-     */
+    /** Hash a 2D integer coordinate to a double in [0, 1). */
     private static double hashToDouble(int x, int z) {
         long h = x * 3129871L ^ (long) z * 116129781L;
         h = h * h * 42317861L + h * 11L;

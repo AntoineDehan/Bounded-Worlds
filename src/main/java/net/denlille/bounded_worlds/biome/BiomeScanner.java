@@ -130,11 +130,7 @@ public class BiomeScanner {
             climateSamples = List.copyOf(climateSamples);
         }
 
-        /**
-         * Returns a copy with the given biome locations merged in (existing
-         * entries win). Replaces the old pattern of mutating biomeLocations()
-         * in place, which broke the record's immutability contract.
-         */
+        /** A copy with the given biome locations merged in (existing entries win). */
         public ScanResult withAdditionalBiomeLocations(Map<Holder<Biome>, BlockPos> additional) {
             Map<Holder<Biome>, BlockPos> merged = new HashMap<>(biomeLocations);
             additional.forEach(merged::putIfAbsent);

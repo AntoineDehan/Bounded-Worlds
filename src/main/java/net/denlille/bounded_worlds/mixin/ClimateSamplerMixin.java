@@ -34,7 +34,6 @@ public class ClimateSamplerMixin {
             return;
         }
 
-        // Convert biome coordinates to block coordinates
         int blockX = pX << 2;
         int blockZ = pZ << 2;
 
