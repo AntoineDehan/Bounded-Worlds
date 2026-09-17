@@ -42,7 +42,8 @@ import java.util.Map;
  */
 public final class RequirementsConfig {
 
-    public static final String FILE_NAME = "bounded_worlds-requirements.json";
+    // Display name used in logs; the file lives in config/bounded_worlds/
+    public static final String FILE_NAME = ConfigFolder.FOLDER_NAME + "/requirements.json";
     public static final int CURRENT_VERSION = 1;
 
     private static final int MIN_CAP = 100;
@@ -66,7 +67,7 @@ public final class RequirementsConfig {
      * a world without its guarantees.
      */
     public static Map<ResourceLocation, DimensionRequirements> load() {
-        Path path = FMLPaths.CONFIGDIR.get().resolve(FILE_NAME);
+        Path path = ConfigFolder.folder().resolve("requirements.json");
         if (!Files.exists(path)) {
             migrateIfNeeded(); // normally done at mod construction; covers deletion at runtime
             if (!Files.exists(path)) {
@@ -220,7 +221,7 @@ public final class RequirementsConfig {
 
     /** Creates the requirements file if absent, seeded from pre-0.6.0 config values. */
     public static void migrateIfNeeded() {
-        Path path = FMLPaths.CONFIGDIR.get().resolve(FILE_NAME);
+        Path path = ConfigFolder.folder().resolve("requirements.json");
         if (Files.exists(path)) {
             return;
         }
@@ -230,7 +231,7 @@ public final class RequirementsConfig {
         if (tomlResult == null) {
             // Creating the file now would lose the unreadable TOML's old values — retry next launch
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Skipping creation of {} this launch so pre-0.6.0 " +
-                    "values are not lost — fix bounded_worlds-common.toml and restart.", FILE_NAME);
+                    "values are not lost — fix {}/common.toml and restart.", FILE_NAME, ConfigFolder.FOLDER_NAME);
             return;
         }
         boolean migrated = tomlResult;
@@ -260,12 +261,13 @@ public final class RequirementsConfig {
     }
 
     /**
-     * Pulls the pre-0.6.0 requirement keys out of the TOML. True: migrated;
-     * false: nothing to migrate; null: TOML unreadable — do not create the file yet.
+     * Pulls the pre-0.6.0 requirement keys out of the TOML (already moved into
+     * the config folder by ConfigFolder.setup()). True: migrated; false:
+     * nothing to migrate; null: TOML unreadable — do not create the file yet.
      */
     @Nullable
     private static Boolean migrateFromToml(JsonObject dimensions) {
-        Path tomlPath = FMLPaths.CONFIGDIR.get().resolve("bounded_worlds-common.toml");
+        Path tomlPath = ConfigFolder.folder().resolve("common.toml");
         if (!Files.exists(tomlPath)) {
             return false;
         }

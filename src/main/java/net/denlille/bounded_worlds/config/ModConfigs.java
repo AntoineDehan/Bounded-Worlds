@@ -28,7 +28,7 @@ public class ModConfigs {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
         builder.comment("Bounded Worlds Configuration",
-                        "Biome and structure requirements (all dimensions) live in bounded_worlds-requirements.json next to this file.");
+                        "Biome and structure requirements (all dimensions) live in requirements.json next to this file.");
 
         CONFIG_VERSION = builder
                 .comment("Internal config format version — do not edit.")
