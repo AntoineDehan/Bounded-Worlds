@@ -30,6 +30,11 @@ public class ForcedBiomeZoneManager {
         private final BiomeSource biomeSource;
         @Nullable private final Climate.Sampler sampler;
         @Nullable private final Object randomState;
+        // Below this block Y, zones with a climate target stop hard-overriding
+        // (the morphed climate keeps the guarantee while cave biomes survive).
+        // Derived from the dimension's sea level so low-surface custom
+        // dimensions are covered too.
+        private final int hardOverrideMinY;
         // CopyOnWriteArrayList for thread-safety (server thread writes, worldgen threads read)
         private final List<ForcedBiomeZone> zones = new CopyOnWriteArrayList<>();
         private volatile boolean hasShapingZones;
@@ -38,12 +43,14 @@ public class ForcedBiomeZoneManager {
         private volatile BorderBiomeRing borderRing;
 
         private DimensionEntry(ResourceLocation dimensionId, boolean overworld, BiomeSource biomeSource,
-                               @Nullable Climate.Sampler sampler, @Nullable Object randomState) {
+                               @Nullable Climate.Sampler sampler, @Nullable Object randomState,
+                               int hardOverrideMinY) {
             this.dimensionId = dimensionId;
             this.overworld = overworld;
             this.biomeSource = biomeSource;
             this.sampler = sampler;
             this.randomState = randomState;
+            this.hardOverrideMinY = hardOverrideMinY;
         }
 
         public ResourceLocation dimensionId() { return dimensionId; }
@@ -69,12 +76,6 @@ public class ForcedBiomeZoneManager {
     // Config kill-switch for terrain shaping, captured at server start
     private static volatile boolean terrainShapingEnabled;
 
-    // Below this block Y, zones with a climate target stop hard-overriding:
-    // the morphed climate still selects the target biome while letting vanilla
-    // cave biomes (deep dark, lush caves...) exist underneath. Nether zones are
-    // unaffected in practice — their morphed climate ignores depth entirely.
-    private static final int HARD_OVERRIDE_MIN_Y = 60;
-
     public static void clear() {
         entries.clear();
     }
@@ -99,7 +100,8 @@ public class ForcedBiomeZoneManager {
                 level.dimension().location(),
                 level.dimension() == Level.OVERWORLD,
                 level.getChunkSource().getGenerator().getBiomeSource(),
-                sampler, randomState);
+                sampler, randomState,
+                level.getChunkSource().getGenerator().getSeaLevel() - 3);
         entries.add(entry);
         return entry;
     }
@@ -165,7 +167,7 @@ public class ForcedBiomeZoneManager {
             // below, the morphed climate keeps the guarantee (depth is untouched)
             // and cave biomes survive. Zones without a target have no morphing,
             // so they keep the full-column override.
-            if (zone.climateTarget() != null && blockY < HARD_OVERRIDE_MIN_Y) {
+            if (zone.climateTarget() != null && blockY < entry.hardOverrideMinY) {
                 continue;
             }
             if (zone.contains(blockX, blockZ)) {
@@ -178,7 +180,7 @@ public class ForcedBiomeZoneManager {
         // hard override only applies near the surface, caves survive below.
         BorderBiomeRing ring = entry.borderRing;
         if (ring != null
-                && !(ring.climateTarget() != null && blockY < HARD_OVERRIDE_MIN_Y)
+                && !(ring.climateTarget() != null && blockY < entry.hardOverrideMinY)
                 && ring.contains(blockX, blockZ)) {
             return ring.biome();
         }

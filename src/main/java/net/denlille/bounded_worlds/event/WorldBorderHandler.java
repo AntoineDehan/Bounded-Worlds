@@ -14,6 +14,7 @@ import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
 import net.denlille.bounded_worlds.biome.ZoneClimateTarget;
 import net.denlille.bounded_worlds.biome.ZonePersistence;
 import net.denlille.bounded_worlds.config.CompassDirection;
+import net.denlille.bounded_worlds.config.DimensionRequirementsConfig;
 import net.denlille.bounded_worlds.config.ModConfigs;
 import net.denlille.bounded_worlds.config.WorldSize;
 import net.denlille.bounded_worlds.config.WorldSizeSelection;
@@ -27,7 +28,9 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -45,6 +48,10 @@ import java.util.Random;
 public class WorldBorderHandler {
 
     private static final String MARKER_FILE = "bounded_worlds_initialized.dat";
+
+    /** A configured modded/datapack dimension, resolved and registered. */
+    private record CustomDimension(ServerLevel level, ForcedBiomeZoneManager.DimensionEntry entry,
+                                   List<String> biomes) {}
 
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
@@ -102,13 +109,50 @@ public class WorldBorderHandler {
             usableRadius = setupBorderBiome(overworld, overworldEntry, spawnPos, radius);
         }
 
+        // Custom (modded/datapack) dimensions from bounded_worlds-dimensions.json.
+        // Their entries must exist before persisted zones are routed below,
+        // otherwise their zones would be dropped as "unknown dimension".
+        List<CustomDimension> customDimensions = new ArrayList<>();
+        for (Map.Entry<ResourceLocation, List<String>> dimReq : DimensionRequirementsConfig.load().entrySet()) {
+            ResourceLocation dimensionId = dimReq.getKey();
+
+            if (dimensionId.equals(Level.OVERWORLD.location()) || dimensionId.equals(Level.NETHER.location())) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] {} in {} — use the [world] / [nether] sections " +
+                        "of bounded_worlds-common.toml instead; entry skipped.",
+                        dimensionId, DimensionRequirementsConfig.FILE_NAME);
+                continue;
+            }
+
+            ServerLevel dimLevel = event.getServer().getLevel(ResourceKey.create(Registries.DIMENSION, dimensionId));
+            if (dimLevel == null) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dimension {} not found — is the mod/datapack installed? Entry skipped.",
+                        dimensionId);
+                continue;
+            }
+
+            BiomeSource dimBiomeSource = dimLevel.getChunkSource().getGenerator().getBiomeSource();
+            if (!(dimBiomeSource instanceof MultiNoiseBiomeSource)) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dimension {} uses a custom biome source ({}) — " +
+                        "biome forcing is not supported there; entry skipped.",
+                        dimensionId, dimBiomeSource.getClass().getName());
+                continue;
+            }
+
+            customDimensions.add(new CustomDimension(dimLevel, ForcedBiomeZoneManager.register(dimLevel), dimReq.getValue()));
+        }
+
         // Load zones persisted in a previous session and route them to their
         // dimension — the scans below see them through the mixins, so their
         // requirements count as satisfied and only genuinely new requirements
         // get fresh zones planned.
         Path zonesPath = worldDir.resolve(ZonePersistence.ZONES_FILE);
         Registry<Biome> biomeRegistry = overworld.registryAccess().registryOrThrow(Registries.BIOME);
-        ZonePersistence.load(zonesPath, biomeRegistry).forEach((dimensionId, zones) -> {
+        Map<ResourceLocation, List<ForcedBiomeZone>> orphanZones = new HashMap<>();
+        for (Map.Entry<ResourceLocation, List<ForcedBiomeZone>> persisted
+                : ZonePersistence.load(zonesPath, biomeRegistry).entrySet()) {
+            ResourceLocation dimensionId = persisted.getKey();
+            List<ForcedBiomeZone> zones = persisted.getValue();
+
             ForcedBiomeZoneManager.DimensionEntry target = null;
             for (ForcedBiomeZoneManager.DimensionEntry entry : ForcedBiomeZoneManager.entries()) {
                 if (entry.dimensionId().equals(dimensionId)) {
@@ -116,13 +160,29 @@ public class WorldBorderHandler {
                     break;
                 }
             }
+
+            // Zones for a dimension without active requirements: if the level
+            // still exists, register it on demand so the zones keep applying
+            // (chunks were already generated with them).
             if (target == null) {
-                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dropping {} persisted zone(s) for unknown dimension {}.",
-                        zones.size(), dimensionId);
-                return;
+                ServerLevel dimLevel = event.getServer().getLevel(ResourceKey.create(Registries.DIMENSION, dimensionId));
+                if (dimLevel != null) {
+                    target = ForcedBiomeZoneManager.register(dimLevel);
+                    BoundedWorlds.LOGGER.info("[Bounded Worlds] Registered {} for {} persisted zone(s) " +
+                            "(no active requirements for this dimension).", dimensionId, zones.size());
+                }
             }
-            zones.forEach(target::addZone);
-        });
+
+            if (target != null) {
+                zones.forEach(target::addZone);
+            } else {
+                // Dimension absent (mod removed?) — keep the zones in the file
+                // so they line up again if it comes back.
+                orphanZones.put(dimensionId, zones);
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Dimension {} not present — keeping its {} persisted zone(s) " +
+                        "on file for when it returns.", dimensionId, zones.size());
+            }
+        }
 
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(
                 overworld, spawnPos, usableRadius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
@@ -139,6 +199,12 @@ public class WorldBorderHandler {
             int netherRadius = Math.min(radius, Math.max(200, radius / 8));
             BlockPos netherCenter = new BlockPos(spawnPos.getX() / 8, 0, spawnPos.getZ() / 8);
             handleBiomePhase(nether, netherCenter, netherRadius, null, netherEntry, ModConfigs.NETHER_REQUIRED_BIOMES.get());
+        }
+
+        // Custom dimension biome guarantees — full radius around the shared
+        // spawn coordinates (no portal-scaling convention for modded dims).
+        for (CustomDimension custom : customDimensions) {
+            handleBiomePhase(custom.level(), spawnPos, radius, null, custom.entry(), custom.biomes());
         }
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
@@ -158,7 +224,7 @@ public class WorldBorderHandler {
 
         // Persist all zones (biome guarantee + structure fallbacks) so they
         // survive restarts, config edits and placement-algorithm changes.
-        boolean hasZones = false;
+        boolean hasZones = !orphanZones.isEmpty();
         for (ForcedBiomeZoneManager.DimensionEntry entry : ForcedBiomeZoneManager.entries()) {
             if (!entry.zones().isEmpty()) {
                 hasZones = true;
@@ -166,7 +232,7 @@ public class WorldBorderHandler {
             }
         }
         if (hasZones) {
-            ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries());
+            ZonePersistence.save(zonesPath, ForcedBiomeZoneManager.entries(), orphanZones);
         }
     }
 
