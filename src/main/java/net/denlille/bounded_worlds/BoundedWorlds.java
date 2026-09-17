@@ -17,8 +17,7 @@ public class BoundedWorlds {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public BoundedWorlds() {
-        // Before Forge loads (and corrects) the TOML: pre-0.6.0 keys are still
-        // readable there and get migrated into the requirements JSON.
+        // Runs before Forge loads/corrects the TOML, while pre-0.6.0 keys are still readable
         RequirementsConfig.migrateIfNeeded();
 
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, ModConfigs.SPEC);

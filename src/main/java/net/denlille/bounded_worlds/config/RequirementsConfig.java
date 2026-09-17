@@ -60,22 +60,17 @@ public final class RequirementsConfig {
     private RequirementsConfig() {}
 
     /**
-     * Returns requirements per dimension id, in file order (deterministic).
-     * Creates a commented default file (migrating pre-0.6.0 settings) if absent.
-     *
-     * @throws IllegalStateException when the file exists but cannot be parsed —
-     *         failing fast beats silently creating a world with no guarantees
-     *         and a first-run marker that would never let structures re-check.
+     * Returns requirements per dimension id, in file order (deterministic);
+     * creates a commented default file (migrating pre-0.6.0 settings) if absent.
+     * A present but unparseable file throws — failing fast beats initializing
+     * a world without its guarantees.
      */
     public static Map<ResourceLocation, DimensionRequirements> load() {
         Path path = FMLPaths.CONFIGDIR.get().resolve(FILE_NAME);
         if (!Files.exists(path)) {
-            // Normally created by migrateIfNeeded() at mod construction; this
-            // covers the file being deleted while the game is running.
-            migrateIfNeeded();
+            migrateIfNeeded(); // normally done at mod construction; covers deletion at runtime
             if (!Files.exists(path)) {
-                // Creation was aborted (unreadable old TOML, disk error) — the
-                // migration already logged why.
+                // Creation aborted — the migration already logged why
                 BoundedWorlds.LOGGER.error("[Bounded Worlds] {} could not be created — no requirements loaded.", FILE_NAME);
                 return Map.of();
             }
@@ -233,8 +228,7 @@ public final class RequirementsConfig {
         JsonObject dimensions = new JsonObject();
         Boolean tomlResult = migrateFromToml(dimensions);
         if (tomlResult == null) {
-            // TOML present but unreadable: don't create the file now, or the
-            // old values would be lost for good — retry next launch.
+            // Creating the file now would lose the unreadable TOML's old values — retry next launch
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Skipping creation of {} this launch so pre-0.6.0 " +
                     "values are not lost — fix bounded_worlds-common.toml and restart.", FILE_NAME);
             return;
@@ -266,10 +260,8 @@ public final class RequirementsConfig {
     }
 
     /**
-     * Pulls requiredBiomes/requiredStructures/nether.requiredBiomes out of a
-     * pre-0.6.0 TOML. True: something migrated. False: nothing to migrate.
-     * Null: the TOML exists but could not be read — the caller must not
-     * create the requirements file yet.
+     * Pulls the pre-0.6.0 requirement keys out of the TOML. True: migrated;
+     * false: nothing to migrate; null: TOML unreadable — do not create the file yet.
      */
     @Nullable
     private static Boolean migrateFromToml(JsonObject dimensions) {

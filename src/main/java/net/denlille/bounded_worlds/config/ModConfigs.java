@@ -5,9 +5,8 @@ import net.minecraftforge.common.ForgeConfigSpec;
 
 public class ModConfigs {
 
-    // Format version of this TOML — bump when keys move or change meaning, so
-    // future versions can read old values (raw, before Forge's correction
-    // strips them) and migrate instead of silently dropping them.
+    // TOML format version — lets future versions read old raw values and
+    // migrate them before Forge's correction strips unknown keys.
     public static final int TOML_VERSION = 2;
 
     public static final ForgeConfigSpec SPEC;

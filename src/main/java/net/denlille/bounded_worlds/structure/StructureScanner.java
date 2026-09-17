@@ -59,8 +59,8 @@ public class StructureScanner {
         List<String> found = new ArrayList<>();
         List<String> placed = new ArrayList<>();
         List<String> failed = new ArrayList<>();
-        // Chunks already claimed by a force-placement this scan, so several
-        // instances of the same structure never stack on one spot.
+        // Chunks claimed by counted natural instances and force-placements —
+        // new placements keep their distance from both.
         Set<Long> usedChunks = new HashSet<>();
 
         for (RequirementsConfig.StructureRequirement requirement : requirements) {
@@ -166,8 +166,7 @@ public class StructureScanner {
         StructureManager structureManager = level.structureManager();
         int centerChunkX = SectionPos.blockToSectionCoord(center.getX());
         int centerChunkZ = SectionPos.blockToSectionCoord(center.getZ());
-        // +1 covers the partial chunk ring at the edge (the per-candidate block
-        // distance check below prevents any over-count)
+        // +1 covers the partial chunk ring at the edge (block-distance check prevents over-count)
         int chunkRadius = radius / 16 + 1;
         long radiusSq = (long) radius * radius;
         Set<Long> countedChunks = new HashSet<>();

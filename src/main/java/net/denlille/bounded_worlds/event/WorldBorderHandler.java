@@ -60,8 +60,7 @@ public class WorldBorderHandler {
             return;
         }
 
-        // Loaded first: a corrupt requirements file fails the start here, before
-        // the border is touched or the world-size selection is consumed.
+        // Loaded first: a corrupt file must fail the start before anything touches the world
         Map<ResourceLocation, RequirementsConfig.DimensionRequirements> requirements = RequirementsConfig.load();
         RequirementsConfig.DimensionRequirements overworldReq =
                 requirements.getOrDefault(Level.OVERWORLD.location(), RequirementsConfig.DimensionRequirements.EMPTY);
