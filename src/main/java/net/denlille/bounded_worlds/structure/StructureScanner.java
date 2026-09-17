@@ -8,6 +8,7 @@ import net.denlille.bounded_worlds.biome.ClimateMatcher;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZone;
 import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
 import net.denlille.bounded_worlds.biome.ZoneClimateTarget;
+import net.denlille.bounded_worlds.config.RequirementsConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
@@ -19,25 +20,34 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.ChunkStatus;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructureCheckResult;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 public class StructureScanner {
 
-    public static ScanResult scanAndPlace(ServerLevel level, int radius, List<String> structureIds,
+    public static ScanResult scanAndPlace(ServerLevel level, int radius,
+                                           List<RequirementsConfig.StructureRequirement> requirements,
                                            BiomeScanner.ScanResult biomeScanResult, BiomeZoneSize sizeCategory) {
         long startTime = System.currentTimeMillis();
 
@@ -49,8 +59,12 @@ public class StructureScanner {
         List<String> found = new ArrayList<>();
         List<String> placed = new ArrayList<>();
         List<String> failed = new ArrayList<>();
+        // Chunks already claimed by a force-placement this scan, so several
+        // instances of the same structure never stack on one spot.
+        Set<Long> usedChunks = new HashSet<>();
 
-        for (String idStr : structureIds) {
+        for (RequirementsConfig.StructureRequirement requirement : requirements) {
+            String idStr = requirement.id();
             ResourceLocation structureId = ResourceLocation.tryParse(idStr);
             if (structureId == null) {
                 BoundedWorlds.LOGGER.warn("[Bounded Worlds] Invalid structure ID: {}", idStr);
@@ -66,60 +80,160 @@ public class StructureScanner {
                 continue;
             }
 
+            if (requirement.hasMax()) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds]   {}: \"max\" is not enforced yet (planned for a future version) — " +
+                        "only \"min\" ({}) is guaranteed.", idStr, requirement.min());
+            }
+            if (requirement.min() <= 0) {
+                continue; // nothing to guarantee (min 0 only becomes meaningful with max)
+            }
+
             Structure structure = structureHolder.value();
 
-            // Use vanilla /locate logic to find the structure
-            BlockPos existingPos = locateStructureVanilla(level, structureHolder, spawnPos, radius);
-
-            if (existingPos != null) {
-                long dx = existingPos.getX() - spawnPos.getX();
-                long dz = existingPos.getZ() - spawnPos.getZ();
-                if (dx * dx + dz * dz <= (long) radius * radius) {
-                    BoundedWorlds.LOGGER.info("[Bounded Worlds]   FOUND: {} at ({}, {})", idStr, existingPos.getX(), existingPos.getZ());
-                    found.add(idStr);
-                    continue;
-                } else {
-                    BoundedWorlds.LOGGER.info("[Bounded Worlds]   Nearest {} is at ({}, {}) but outside radius (dist={})",
-                            idStr, existingPos.getX(), existingPos.getZ(),
-                            (int) Math.sqrt(dx * dx + dz * dz));
-                }
-            }
-
-            // Structure not found within radius — try to force-place it
-            BoundedWorlds.LOGGER.info("[Bounded Worlds]   MISSING: {} — attempting force-placement...", idStr);
-
-            HolderSet<Biome> validBiomes = structure.biomes();
-            BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure {} requires biomes: {}", idStr, validBiomes);
-
-            // Generate the StructureStart once and pass it to forcePlace
-            GenerateResult generateResult = findValidPlacementAndGenerate(level, structure, biomeScanResult, spawnPos, radius, random, idStr);
-
-            // Fallback: if no existing biome worked, force a dedicated biome zone and retry
-            if (generateResult == null) {
-                BoundedWorlds.LOGGER.info("[Bounded Worlds]   Primary placement failed for {} — trying fallback with forced biome zone...", idStr);
-                generateResult = fallbackWithForcedBiome(level, structure, spawnPos, radius, random, idStr, sizeCategory, biomeScanResult);
-            }
-
-            if (generateResult == null) {
-                BoundedWorlds.LOGGER.warn("[Bounded Worlds]   FAILED: Could not place {} even with fallback.", idStr);
-                failed.add(idStr);
+            int existing = countExisting(level, structureHolder, spawnPos, radius, requirement.min());
+            if (existing >= requirement.min()) {
+                BoundedWorlds.LOGGER.info("[Bounded Worlds]   FOUND: {} ({}/{} within radius)",
+                        idStr, existing, requirement.min());
+                found.add(idStr + " (" + existing + "/" + requirement.min() + ")");
                 continue;
             }
 
-            boolean success = forcePlace(level, structure, generateResult, idStr);
-            if (success) {
-                BoundedWorlds.LOGGER.info("[Bounded Worlds]   PLACED: {} at ({}, {})", idStr,
-                        generateResult.pos().getX(), generateResult.pos().getZ());
-                placed.add(idStr);
-            } else {
-                BoundedWorlds.LOGGER.warn("[Bounded Worlds]   FAILED: Could not write {} at ({}, {})", idStr,
-                        generateResult.pos().getX(), generateResult.pos().getZ());
-                failed.add(idStr);
+            int deficit = requirement.min() - existing;
+            BoundedWorlds.LOGGER.info("[Bounded Worlds]   MISSING: {} ({}/{} within radius) — force-placing {} instance(s)...",
+                    idStr, existing, requirement.min(), deficit);
+            BoundedWorlds.LOGGER.debug("[Bounded Worlds]   Structure {} requires biomes: {}", idStr, structure.biomes());
+
+            int placedCount = 0;
+            for (int i = 0; i < deficit; i++) {
+                // Generate the StructureStart once and pass it to forcePlace
+                GenerateResult generateResult = findValidPlacementAndGenerate(
+                        level, structure, biomeScanResult, spawnPos, radius, random, idStr, usedChunks);
+
+                // Fallback: if no existing biome worked, force a dedicated biome zone and retry
+                if (generateResult == null) {
+                    BoundedWorlds.LOGGER.info("[Bounded Worlds]   Primary placement failed for {} — trying fallback with forced biome zone...", idStr);
+                    generateResult = fallbackWithForcedBiome(level, structure, spawnPos, radius, random, idStr,
+                            sizeCategory, biomeScanResult, usedChunks);
+                }
+
+                if (generateResult == null) {
+                    BoundedWorlds.LOGGER.warn("[Bounded Worlds]   FAILED: Could not place {} even with fallback ({} of {} placed).",
+                            idStr, placedCount, deficit);
+                    break;
+                }
+
+                if (forcePlace(level, structure, generateResult, idStr)) {
+                    BoundedWorlds.LOGGER.info("[Bounded Worlds]   PLACED: {} at ({}, {})", idStr,
+                            generateResult.pos().getX(), generateResult.pos().getZ());
+                    usedChunks.add(generateResult.chunkPos().toLong());
+                    placedCount++;
+                } else {
+                    BoundedWorlds.LOGGER.warn("[Bounded Worlds]   FAILED: Could not write {} at ({}, {})", idStr,
+                            generateResult.pos().getX(), generateResult.pos().getZ());
+                    break;
+                }
+            }
+
+            if (placedCount > 0) {
+                placed.add(idStr + " x" + placedCount);
+            }
+            if (placedCount < deficit) {
+                failed.add(idStr + " (" + (existing + placedCount) + "/" + requirement.min() + ")");
             }
         }
 
         long elapsed = System.currentTimeMillis() - startTime;
         return new ScanResult(found, placed, failed, elapsed);
+    }
+
+    /**
+     * Counts how many instances of a structure would exist within the radius,
+     * stopping at {@code enough}. The bounded world makes this exact: every
+     * natural placement cell is enumerated and checked with the same logic
+     * /locate uses (works on ungenerated chunks — no chunk loading).
+     */
+    private static int countExisting(ServerLevel level, Holder<Structure> holder,
+                                     BlockPos center, int radius, int enough) {
+        ChunkGeneratorStructureState structureState = level.getChunkSource().getGeneratorState();
+        List<StructurePlacement> placements = structureState.getPlacementsForStructure(holder);
+        if (placements.isEmpty()) {
+            return 0; // no natural generation for this structure in this dimension
+        }
+
+        Structure structure = holder.value();
+        StructureManager structureManager = level.structureManager();
+        int centerChunkX = SectionPos.blockToSectionCoord(center.getX());
+        int centerChunkZ = SectionPos.blockToSectionCoord(center.getZ());
+        int chunkRadius = radius / 16;
+        long radiusSq = (long) radius * radius;
+        Set<Long> countedChunks = new HashSet<>();
+        int count = 0;
+
+        for (StructurePlacement placement : placements) {
+            if (placement instanceof RandomSpreadStructurePlacement spread) {
+                int spacing = spread.spacing();
+                int minRegionX = Math.floorDiv(centerChunkX - chunkRadius, spacing);
+                int maxRegionX = Math.floorDiv(centerChunkX + chunkRadius, spacing);
+                int minRegionZ = Math.floorDiv(centerChunkZ - chunkRadius, spacing);
+                int maxRegionZ = Math.floorDiv(centerChunkZ + chunkRadius, spacing);
+                for (int regionX = minRegionX; regionX <= maxRegionX; regionX++) {
+                    for (int regionZ = minRegionZ; regionZ <= maxRegionZ; regionZ++) {
+                        ChunkPos candidate = spread.getPotentialStructureChunk(
+                                structureState.getLevelSeed(), regionX * spacing, regionZ * spacing);
+                        if (countsAsPresent(candidate, placement, structureState, structureManager, structure,
+                                center, radiusSq, countedChunks)) {
+                            count++;
+                            if (count >= enough) return count;
+                        }
+                    }
+                }
+            } else if (placement instanceof ConcentricRingsStructurePlacement rings) {
+                List<ChunkPos> ringPositions = structureState.getRingPositionsFor(rings);
+                if (ringPositions == null) continue;
+                for (ChunkPos candidate : ringPositions) {
+                    if (countsAsPresent(candidate, placement, structureState, structureManager, structure,
+                            center, radiusSq, countedChunks)) {
+                        count++;
+                        if (count >= enough) return count;
+                    }
+                }
+            } else {
+                // Modded placement type — no cell enumeration available; the
+                // vanilla nearest-lookup can at least detect one instance.
+                BlockPos nearest = locateStructureVanilla(level, holder, center, radius);
+                if (nearest != null) {
+                    long dx = nearest.getX() - center.getX();
+                    long dz = nearest.getZ() - center.getZ();
+                    if (dx * dx + dz * dz <= radiusSq) {
+                        count++;
+                        if (count >= enough) return count;
+                    }
+                }
+                if (enough > 1) {
+                    BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Placement type {} is not enumerable — " +
+                            "at most one existing instance can be detected; the rest will be force-placed.",
+                            placement.getClass().getSimpleName());
+                }
+            }
+        }
+        return count;
+    }
+
+    /** Radius + frequency + would-generate check for one candidate placement chunk. */
+    private static boolean countsAsPresent(ChunkPos candidate, StructurePlacement placement,
+                                           ChunkGeneratorStructureState structureState,
+                                           StructureManager structureManager, Structure structure,
+                                           BlockPos center, long radiusSq, Set<Long> countedChunks) {
+        long dx = candidate.getMiddleBlockX() - center.getX();
+        long dz = candidate.getMiddleBlockZ() - center.getZ();
+        if (dx * dx + dz * dz > radiusSq) return false;
+        if (!placement.isStructureChunk(structureState, candidate.x, candidate.z)) return false;
+        if (!countedChunks.add(candidate.toLong())) return false;
+        // START_PRESENT: would generate (or already has). CHUNK_LOAD_NEEDED: the
+        // chunk was generated before this scan — the start was decided by the
+        // same placement logic, so count it rather than force-loading the chunk.
+        return structureManager.checkStructurePresence(candidate, structure, false)
+                != StructureCheckResult.START_NOT_PRESENT;
     }
 
     @Nullable
@@ -151,7 +265,7 @@ public class StructureScanner {
     private static GenerateResult findValidPlacementAndGenerate(ServerLevel level, Structure structure,
                                                                  BiomeScanner.ScanResult biomeScanResult,
                                                                  BlockPos center, int radius, Random random,
-                                                                 String structureId) {
+                                                                 String structureId, Set<Long> usedChunks) {
         int centerX = center.getX();
         int centerZ = center.getZ();
         int borderPadding = 100;
@@ -210,9 +324,13 @@ public class StructureScanner {
 
         for (BlockPos candidate : candidates) {
             if (tried >= 20) break;
-            tried++;
 
             ChunkPos chunkPos = new ChunkPos(candidate);
+            if (tooCloseToUsed(chunkPos, usedChunks)) {
+                continue; // already claimed by a previous force-placement
+            }
+            tried++;
+
             try {
                 StructureStart start = structure.generate(
                         level.registryAccess(),
@@ -255,7 +373,8 @@ public class StructureScanner {
     private static GenerateResult fallbackWithForcedBiome(ServerLevel level, Structure structure,
                                                            BlockPos center, int radius, Random random,
                                                            String structureId, BiomeZoneSize sizeCategory,
-                                                           BiomeScanner.ScanResult biomeScanResult) {
+                                                           BiomeScanner.ScanResult biomeScanResult,
+                                                           Set<Long> usedChunks) {
         HolderSet<Biome> validBiomes = structure.biomes();
         BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
 
@@ -374,6 +493,9 @@ public class StructureScanner {
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 ChunkPos tryPos = new ChunkPos(chunkPos.x + dx, chunkPos.z + dz);
+                if (tooCloseToUsed(tryPos, usedChunks)) {
+                    continue;
+                }
                 try {
                     StructureStart start = structure.generate(
                             level.registryAccess(),
@@ -402,6 +524,17 @@ public class StructureScanner {
 
         BoundedWorlds.LOGGER.warn("[Bounded Worlds]   Fallback: Structure.generate() failed even in forced biome zone for {}", structureId);
         return null;
+    }
+
+    /** True when a chunk is within 8 chunks of one already claimed this scan. */
+    private static boolean tooCloseToUsed(ChunkPos pos, Set<Long> usedChunks) {
+        for (long used : usedChunks) {
+            ChunkPos usedPos = new ChunkPos(used);
+            if (Math.max(Math.abs(usedPos.x - pos.x), Math.abs(usedPos.z - pos.z)) < 8) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

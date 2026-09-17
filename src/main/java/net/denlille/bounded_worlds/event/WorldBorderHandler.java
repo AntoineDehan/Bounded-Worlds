@@ -14,8 +14,8 @@ import net.denlille.bounded_worlds.biome.ForcedBiomeZoneManager;
 import net.denlille.bounded_worlds.biome.ZoneClimateTarget;
 import net.denlille.bounded_worlds.biome.ZonePersistence;
 import net.denlille.bounded_worlds.config.CompassDirection;
-import net.denlille.bounded_worlds.config.DimensionRequirementsConfig;
 import net.denlille.bounded_worlds.config.ModConfigs;
+import net.denlille.bounded_worlds.config.RequirementsConfig;
 import net.denlille.bounded_worlds.config.WorldSize;
 import net.denlille.bounded_worlds.config.WorldSizeSelection;
 import net.denlille.bounded_worlds.structure.StructureScanner;
@@ -51,7 +51,7 @@ public class WorldBorderHandler {
 
     /** A configured modded/datapack dimension, resolved and registered. */
     private record CustomDimension(ServerLevel level, ForcedBiomeZoneManager.DimensionEntry entry,
-                                   List<String> biomes) {}
+                                   RequirementsConfig.DimensionRequirements requirements) {}
 
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
@@ -109,18 +109,23 @@ public class WorldBorderHandler {
             usableRadius = setupBorderBiome(overworld, overworldEntry, spawnPos, radius);
         }
 
-        // Custom (modded/datapack) dimensions from bounded_worlds-dimensions.json.
-        // Their entries must exist before persisted zones are routed below,
-        // otherwise their zones would be dropped as "unknown dimension".
+        // All requirements (biomes + structures, every dimension) come from
+        // bounded_worlds-requirements.json.
+        Map<ResourceLocation, RequirementsConfig.DimensionRequirements> requirements = RequirementsConfig.load();
+        RequirementsConfig.DimensionRequirements overworldReq =
+                requirements.getOrDefault(Level.OVERWORLD.location(), RequirementsConfig.DimensionRequirements.EMPTY);
+        RequirementsConfig.DimensionRequirements netherReq =
+                requirements.getOrDefault(Level.NETHER.location(), RequirementsConfig.DimensionRequirements.EMPTY);
+
+        // Custom (modded/datapack) dimensions. Their entries must exist before
+        // persisted zones are routed below, otherwise their zones would be
+        // dropped as "unknown dimension".
         List<CustomDimension> customDimensions = new ArrayList<>();
-        for (Map.Entry<ResourceLocation, List<String>> dimReq : DimensionRequirementsConfig.load().entrySet()) {
+        for (Map.Entry<ResourceLocation, RequirementsConfig.DimensionRequirements> dimReq : requirements.entrySet()) {
             ResourceLocation dimensionId = dimReq.getKey();
 
             if (dimensionId.equals(Level.OVERWORLD.location()) || dimensionId.equals(Level.NETHER.location())) {
-                BoundedWorlds.LOGGER.warn("[Bounded Worlds] {} in {} — use the [world] / [nether] sections " +
-                        "of bounded_worlds-common.toml instead; entry skipped.",
-                        dimensionId, DimensionRequirementsConfig.FILE_NAME);
-                continue;
+                continue; // handled by their dedicated phases below
             }
 
             ServerLevel dimLevel = event.getServer().getLevel(ResourceKey.create(Registries.DIMENSION, dimensionId));
@@ -185,7 +190,7 @@ public class WorldBorderHandler {
         }
 
         BiomeScanner.ScanResult biomeScanResult = handleBiomePhase(
-                overworld, spawnPos, usableRadius, directional, overworldEntry, ModConfigs.REQUIRED_BIOMES.get());
+                overworld, spawnPos, usableRadius, directional, overworldEntry, overworldReq.requiredBiomes());
 
         // Nether biome guarantee. No custom Nether border: vanilla shares one
         // border across dimensions and the client always renders the overworld
@@ -198,18 +203,27 @@ public class WorldBorderHandler {
         if (netherEntry != null) {
             int netherRadius = Math.min(radius, Math.max(200, radius / 8));
             BlockPos netherCenter = new BlockPos(spawnPos.getX() / 8, 0, spawnPos.getZ() / 8);
-            handleBiomePhase(nether, netherCenter, netherRadius, null, netherEntry, ModConfigs.NETHER_REQUIRED_BIOMES.get());
+            handleBiomePhase(nether, netherCenter, netherRadius, null, netherEntry, netherReq.requiredBiomes());
         }
 
         // Custom dimension biome guarantees — full radius around the shared
         // spawn coordinates (no portal-scaling convention for modded dims).
         for (CustomDimension custom : customDimensions) {
-            handleBiomePhase(custom.level(), spawnPos, radius, null, custom.entry(), custom.biomes());
+            handleBiomePhase(custom.level(), spawnPos, radius, null, custom.entry(), custom.requirements().requiredBiomes());
+        }
+
+        // Structure guarantees are overworld-only for now: warn once for
+        // entries that declare them elsewhere.
+        for (Map.Entry<ResourceLocation, RequirementsConfig.DimensionRequirements> dimReq : requirements.entrySet()) {
+            if (!dimReq.getKey().equals(Level.OVERWORLD.location()) && !dimReq.getValue().structures().isEmpty()) {
+                BoundedWorlds.LOGGER.warn("[Bounded Worlds] Structure requirements are only supported in the overworld " +
+                        "for now — ignored for {}.", dimReq.getKey());
+            }
         }
 
         // Phase 3: Structure guarantee (only on first run — structures are permanent)
         if (firstRun) {
-            handleStructurePhase(overworld, usableRadius, biomeScanResult);
+            handleStructurePhase(overworld, usableRadius, biomeScanResult, overworldReq.structures());
 
             // Write marker file
             try {
@@ -411,19 +425,18 @@ public class WorldBorderHandler {
         return result;
     }
 
-    private void handleStructurePhase(ServerLevel overworld, int radius, BiomeScanner.ScanResult biomeScanResult) {
-        List<? extends String> structureEntries = ModConfigs.REQUIRED_STRUCTURES.get();
-        if (structureEntries.isEmpty()) {
+    private void handleStructurePhase(ServerLevel overworld, int radius, BiomeScanner.ScanResult biomeScanResult,
+                                      List<RequirementsConfig.StructureRequirement> structureRequirements) {
+        if (structureRequirements.isEmpty()) {
             BoundedWorlds.LOGGER.info("[Bounded Worlds] No required structures configured, skipping structure scan.");
             return;
         }
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Checking {} required structure(s) within {} block radius...",
-                structureEntries.size(), radius);
+                structureRequirements.size(), radius);
 
         BiomeZoneSize sizeCategory = ModConfigs.FORCED_BIOME_SIZE.get();
-        List<String> structureIds = new ArrayList<>(structureEntries);
-        StructureScanner.ScanResult result = StructureScanner.scanAndPlace(overworld, radius, structureIds, biomeScanResult, sizeCategory);
+        StructureScanner.ScanResult result = StructureScanner.scanAndPlace(overworld, radius, structureRequirements, biomeScanResult, sizeCategory);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Structure scan complete in {}ms. Found: {}, Placed: {}, Failed: {}",
                 result.scanTimeMs(), result.found().size(), result.placed().size(), result.failed().size());
