@@ -86,14 +86,9 @@ public class DirectionalClimateManager {
         int relX = blockX - centerX;
         int relZ = blockZ - centerZ;
 
-        // Project onto the direction vector
-        // For SOUTH (0,1): projection = relZ. Positive = toward hot.
+        // Projection onto the direction vector, normalized to [-1, 1] over the radius
         int projection = relX * dirDx + relZ * dirDz;
-
-        // Normalize to [-1, 1] based on world radius
         float normalized = (float) projection / worldRadius;
-
-        // Clamp to [-1, 1]
         normalized = Math.max(-1f, Math.min(1f, normalized));
 
         // Quadratic ramp: x * |x| preserves sign but grows slowly near center

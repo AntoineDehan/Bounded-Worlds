@@ -3,23 +3,23 @@ package net.denlille.bounded_worlds.config;
 import net.denlille.bounded_worlds.biome.BiomeZoneSize;
 import net.minecraftforge.common.ForgeConfigSpec;
 
-import java.util.List;
-
 public class ModConfigs {
 
+    // TOML format version — lets future versions read old raw values and
+    // migrate them before Forge's correction strips unknown keys.
+    public static final int TOML_VERSION = 2;
+
     public static final ForgeConfigSpec SPEC;
+    public static final ForgeConfigSpec.IntValue CONFIG_VERSION;
     public static final ForgeConfigSpec.IntValue SMALL_RADIUS;
     public static final ForgeConfigSpec.IntValue MEDIUM_RADIUS;
     public static final ForgeConfigSpec.IntValue LARGE_RADIUS;
     public static final ForgeConfigSpec.EnumValue<WorldSize> DEFAULT_WORLD_SIZE;
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_BIOMES;
     public static final ForgeConfigSpec.EnumValue<BiomeZoneSize> FORCED_BIOME_SIZE;
     public static final ForgeConfigSpec.BooleanValue TERRAIN_SHAPING;
     public static final ForgeConfigSpec.BooleanValue BORDER_BIOME_ENABLED;
     public static final ForgeConfigSpec.ConfigValue<String> BORDER_BIOME;
     public static final ForgeConfigSpec.IntValue BORDER_BIOME_WIDTH;
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> REQUIRED_STRUCTURES;
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NETHER_REQUIRED_BIOMES;
     public static final ForgeConfigSpec.BooleanValue DIRECTIONAL_ENABLED;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HOT_DIRECTION;
     public static final ForgeConfigSpec.EnumValue<CompassDirection> HUMID_DIRECTION;
@@ -27,7 +27,13 @@ public class ModConfigs {
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
-        builder.comment("Bounded Worlds Configuration");
+        builder.comment("Bounded Worlds Configuration",
+                        "Biome and structure requirements (all dimensions) live in bounded_worlds-requirements.json next to this file.");
+
+        CONFIG_VERSION = builder
+                .comment("Internal config format version — do not edit.")
+                .defineInRange("configVersion", TOML_VERSION, 1, Integer.MAX_VALUE);
+
         builder.push("world");
 
         SMALL_RADIUS = builder
@@ -45,13 +51,6 @@ public class ModConfigs {
                 .comment("Size used when none was picked in the creation screen (dedicated servers,",
                          "or re-init after deleting 'bounded_worlds_initialized.dat' in the world folder).")
                 .defineEnum("defaultWorldSize", WorldSize.MEDIUM);
-
-        REQUIRED_BIOMES = builder
-                .comment("Biomes or #tags that must exist within the border, e.g. \"minecraft:mushroom_fields\", \"#forge:is_hot\".",
-                         "Missing ones are generated as natural-looking zones.")
-                .defineListAllowEmpty("requiredBiomes",
-                        List.of(),
-                        obj -> obj instanceof String s && !s.isBlank());
 
         FORCED_BIOME_SIZE = builder
                 .comment("Size of forced biome zones: SMALL 100-200, MEDIUM 250-350, LARGE 400-600 blocks.")
@@ -75,27 +74,7 @@ public class ModConfigs {
                 .comment("Ring width in blocks, measured inward from the world border.")
                 .defineInRange("borderBiomeWidth", 256, 64, 2048);
 
-        REQUIRED_STRUCTURES = builder
-                .comment("Structure IDs that must exist within the border, e.g. \"minecraft:monument\".",
-                         "Missing ones are force-placed. Checked on first world creation only.")
-                .defineListAllowEmpty("requiredStructures",
-                        List.of(),
-                        obj -> obj instanceof String s && !s.isBlank());
-
         builder.pop(); // world
-
-        builder.comment("Nether requirements. Zones are placed within world radius / 8 of the scaled spawn",
-                        "(the Nether shares the overworld's border).");
-        builder.push("nether");
-
-        NETHER_REQUIRED_BIOMES = builder
-                .comment("Biomes or #tags required in the Nether, e.g. \"minecraft:crimson_forest\".",
-                         "Nether biomes only; prefer a SMALL forcedBiomeSize when listing several.")
-                .defineListAllowEmpty("requiredBiomes",
-                        List.of(),
-                        obj -> obj instanceof String s && !s.isBlank());
-
-        builder.pop(); // nether
 
         builder.comment("Terraria-style directional layout: hot/cold and humid/dry biome axes around spawn.");
         builder.push("directional");

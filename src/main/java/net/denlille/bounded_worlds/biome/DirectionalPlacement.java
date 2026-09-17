@@ -46,13 +46,11 @@ public class DirectionalPlacement {
                                       BiomeClimateClassifier.TemperatureCategory temp,
                                       BiomeClimateClassifier.HumidityCategory humidity) {
 
-        // No constraint for fully neutral biomes
         if (temp == BiomeClimateClassifier.TemperatureCategory.TEMPERATE
                 && humidity == BiomeClimateClassifier.HumidityCategory.NEUTRAL) {
             return true;
         }
 
-        // Within the neutral zone around spawn → no constraint
         double dx = blockX - centerX;
         double dz = blockZ - centerZ;
         double dist = Math.sqrt(dx * dx + dz * dz);
@@ -61,13 +59,8 @@ public class DirectionalPlacement {
             return true;
         }
 
-        // Check temperature axis constraint
-        boolean tempOk = checkAxis(blockX, blockZ, centerX, centerZ, temp);
-
-        // Check humidity axis constraint
-        boolean humidOk = checkAxis(blockX, blockZ, centerX, centerZ, humidity);
-
-        return tempOk && humidOk;
+        return checkAxis(blockX, blockZ, centerX, centerZ, temp)
+                && checkAxis(blockX, blockZ, centerX, centerZ, humidity);
     }
 
     /**
@@ -76,7 +69,7 @@ public class DirectionalPlacement {
     private boolean checkAxis(int blockX, int blockZ, int centerX, int centerZ,
                                BiomeClimateClassifier.TemperatureCategory temp) {
         if (temp == BiomeClimateClassifier.TemperatureCategory.TEMPERATE) {
-            return true; // No temperature constraint
+            return true;
         }
 
         CompassDirection targetDir = (temp == BiomeClimateClassifier.TemperatureCategory.HOT)
@@ -91,7 +84,7 @@ public class DirectionalPlacement {
     private boolean checkAxis(int blockX, int blockZ, int centerX, int centerZ,
                                BiomeClimateClassifier.HumidityCategory humidity) {
         if (humidity == BiomeClimateClassifier.HumidityCategory.NEUTRAL) {
-            return true; // No humidity constraint
+            return true;
         }
 
         CompassDirection targetDir = (humidity == BiomeClimateClassifier.HumidityCategory.HUMID)
@@ -109,11 +102,8 @@ public class DirectionalPlacement {
         int relX = blockX - centerX;
         int relZ = blockZ - centerZ;
 
-        // Project onto the direction vector
-        // For NORTH (0,-1): projection = -relZ → must be > 0 → relZ < 0
-        // For SOUTH (0,1): projection = relZ → must be > 0 → relZ > 0
-        // For EAST (1,0): projection = relX → must be > 0 → relX > 0
-        // For WEST (-1,0): projection = -relX → must be > 0 → relX < 0
+        // Projection onto the direction vector; e.g. SOUTH (0,1) → relZ >= 0
+        // (positive Z = south in Minecraft)
         int projection = relX * direction.getDx() + relZ * direction.getDz();
         return projection >= 0;
     }
