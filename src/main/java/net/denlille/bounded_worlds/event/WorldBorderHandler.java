@@ -439,7 +439,7 @@ public class WorldBorderHandler {
         StructureScanner.ScanResult result = StructureScanner.scanAndPlace(overworld, radius, structureRequirements, biomeScanResult, sizeCategory);
 
         BoundedWorlds.LOGGER.info("[Bounded Worlds] Structure scan complete in {}ms. Found: {}, Placed: {}, Failed: {}",
-                result.scanTimeMs(), result.found().size(), result.placed().size(), result.failed().size());
+                result.scanTimeMs(), result.found(), result.placed(), result.failed());
 
         if (!result.failed().isEmpty()) {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Failed to place structures: {}", result.failed());

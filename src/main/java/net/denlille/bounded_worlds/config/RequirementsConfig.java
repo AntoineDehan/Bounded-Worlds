@@ -221,7 +221,15 @@ public final class RequirementsConfig {
         }
 
         JsonObject dimensions = new JsonObject();
-        boolean migrated = migrateFromToml(dimensions);
+        Boolean tomlResult = migrateFromToml(dimensions);
+        if (tomlResult == null) {
+            // TOML present but unreadable: don't create the file now, or the
+            // old values would be lost for good — retry next launch.
+            BoundedWorlds.LOGGER.warn("[Bounded Worlds] Skipping creation of {} this launch so pre-0.6.0 " +
+                    "values are not lost — fix bounded_worlds-common.toml and restart.", FILE_NAME);
+            return;
+        }
+        boolean migrated = tomlResult;
         migrated |= migrateFromDimensionsJson(dimensions);
 
         JsonObject root = new JsonObject();
@@ -231,7 +239,7 @@ public final class RequirementsConfig {
         comment.add("requiredBiomes: biome ids or #tags, generated as natural-looking zones when missing.");
         comment.add("structures: id -> number (= min instances) or { \"min\": n, \"max\": n }.");
         comment.add("min instances are force-placed if missing (overworld only, checked on first world creation).");
-        comment.add("max (0 = disabled, 1 = unique) is accepted but NOT enforced yet — planned for a future version.");
+        comment.add("max (0 = disabled, 1 = unique) is accepted but NOT enforced yet - planned for a future version.");
         comment.add("Keys starting with an underscore are ignored. Do not edit config_version.");
         comment.add("Example: \"minecraft:overworld\": { \"requiredBiomes\": [\"minecraft:mushroom_fields\"], " +
                 "\"structures\": { \"minecraft:monument\": { \"min\": 1 } } }");
@@ -239,7 +247,7 @@ public final class RequirementsConfig {
         root.add("dimensions", dimensions);
 
         try {
-            Files.writeString(path, new GsonBuilder().setPrettyPrinting().create().toJson(root));
+            Files.writeString(path, new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root));
             BoundedWorlds.LOGGER.info("[Bounded Worlds] Created {}{}.", FILE_NAME,
                     migrated ? " (migrated pre-0.6.0 requirements from the old config keys)" : "");
         } catch (Exception e) {
@@ -247,16 +255,22 @@ public final class RequirementsConfig {
         }
     }
 
-    /** Pulls requiredBiomes/requiredStructures/nether.requiredBiomes out of a pre-0.6.0 TOML. */
-    private static boolean migrateFromToml(JsonObject dimensions) {
+    /**
+     * Pulls requiredBiomes/requiredStructures/nether.requiredBiomes out of a
+     * pre-0.6.0 TOML. True: something migrated. False: nothing to migrate.
+     * Null: the TOML exists but could not be read — the caller must not
+     * create the requirements file yet.
+     */
+    @Nullable
+    private static Boolean migrateFromToml(JsonObject dimensions) {
         Path tomlPath = FMLPaths.CONFIGDIR.get().resolve("bounded_worlds-common.toml");
         if (!Files.exists(tomlPath)) {
             return false;
         }
 
-        List<String> overworldBiomes = List.of();
-        List<String> overworldStructures = List.of();
-        List<String> netherBiomes = List.of();
+        List<String> overworldBiomes;
+        List<String> overworldStructures;
+        List<String> netherBiomes;
         try (FileConfig toml = FileConfig.of(tomlPath)) {
             toml.load();
             overworldBiomes = stringList(toml.get("world.requiredBiomes"));
@@ -264,7 +278,7 @@ public final class RequirementsConfig {
             netherBiomes = stringList(toml.get("nether.requiredBiomes"));
         } catch (Exception e) {
             BoundedWorlds.LOGGER.warn("[Bounded Worlds] Could not read old TOML values for migration: {}", e.getMessage());
-            return false;
+            return null;
         }
 
         boolean migrated = false;
