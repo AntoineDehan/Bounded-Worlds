@@ -81,9 +81,11 @@ public final class RequirementsConfig {
         try {
             root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
         } catch (Exception e) {
-            throw new IllegalStateException("[Bounded Worlds] config/" + FILE_NAME + " is invalid JSON (" +
-                    e.getMessage() + "). Fix or delete the file, then restart — starting the world without it " +
-                    "would permanently skip its biome/structure guarantees.", e);
+            // Absolute path: support tickets showed users editing a copy at the
+            // wrong location while the game read this one
+            throw new IllegalStateException("[Bounded Worlds] " + path.toAbsolutePath() + " is invalid JSON (" +
+                    e.getMessage() + "). Fix or delete THIS exact file, then restart — starting the world " +
+                    "without it would permanently skip its biome/structure guarantees.", e);
         }
 
         int version = 1;
